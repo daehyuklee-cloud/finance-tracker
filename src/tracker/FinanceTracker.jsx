@@ -128,10 +128,16 @@ async function fetchRate(from, to) {
   const key=`${from}_${to}`;
   if(rateCache[key]!==undefined) return rateCache[key];
   try {
-    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`);
+    // open.er-api.com — free, no key, supports PHP/KRW/IDR/THB and 160+ currencies
+    const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
     const data = await res.json();
-    const r = data.rates?.[to] || null;
-    rateCache[key]=r;
+    const r = (data.result==="success" && data.rates?.[to]) ? data.rates[to] : null;
+    if(r!==null){
+      // cache all pairs from this base to save requests
+      Object.entries(data.rates||{}).forEach(([cur,val])=>{ rateCache[`${from}_${cur}`]=val; });
+    } else {
+      rateCache[key]=null;
+    }
     return r;
   } catch { return null; }
 }
