@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { loadData, saveData } from "../db";
 
-const TABS = ["Dashboard", "Banks", "Crypto", "Investments", "Analytics", "Notes", "✨ Ask AI"];
+const TABS = ["Dashboard", "Banks", "Crypto", "Investments", "Analytics", "Notes"];
 const COLORS_LIST = ["#3B82F6","#10B981","#F59E0B","#8B5CF6","#EC4899","#06B6D4","#F97316","#84CC16"];
 const AI_COLOR = "#EC4899";
 const UNALLOC_ID = "__unallocated__";
@@ -723,93 +723,6 @@ function Dashboard({ banks, crypto, investments }) {
   );
 }
 
-// ── AI Assistant ──
-function buildDataSummary(banks, crypto, investments) {
-  const lines=["=== FINANCIAL DATA ===",`Date: ${new Date().toLocaleDateString()}`];
-  banks.forEach(b=>{
-    lines.push(`\nBank: ${b.name} | Currency: ${b.currency} | Total: ${sym(b.currency)}${fmtNum(bankTotal(b))}`);
-    (b.envelopes||[]).forEach(e=>{
-      lines.push(`  Envelope: ${e.name} | ${sym(b.currency)}${fmtNum(e.balance)}${e.goal?` | Goal: ${sym(b.currency)}${fmtNum(e.goal)}`:""}${e.isUnalloc?" [Unallocated]":""}`);
-      e.transactions?.slice(0,5).forEach(t=>lines.push(`    ${t.type} ${sym(b.currency)}${fmtNum(t.amount)} - ${t.desc}${t.tag?` [${t.tag}]`:""} (${t.date})`));
-    });
-  });
-  lines.push("\n-- Crypto --");
-  crypto.forEach(h=>lines.push(`${h.coin}: ${h.amount} | $${fmtNum(h.value)}`));
-  lines.push("\n-- Investments --");
-  investments.forEach(i=>lines.push(`${i.name} (${i.type}): $${fmtNum(i.value)}`));
-  return lines.join("\n");
-}
-
-function AIAssistant({ banks, crypto, investments, setBanks, setCrypto, setInvestments, tags }) {
-  const [messages,setMessages]=useState([{role:"assistant",content:'Hi! I can see all your financial data. Ask me anything or tell me what to do — like "add ₱5000 income to BDO > Salary" or "how much is in my Emergency envelope?"'}]);
-  const [input,setInput]=useState("");
-  const [loading,setLoading]=useState(false);
-  const bottomRef=useRef(null);
-  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[messages]);
-
-  const applyActions=actions=>{
-    if(!actions?.length)return;
-    actions.forEach(action=>{
-      try{
-        if(action.type==="add_transaction"){
-          const{bankName,envelopeName,txType,amount,desc,tag,note,date}=action;
-          const bank=banks.find(b=>b.name.toLowerCase().includes(bankName.toLowerCase()));if(!bank)return;
-          const envId=bank.envelopes.find(e=>e.name.toLowerCase().includes(envelopeName.toLowerCase()))?.id;if(!envId)return;
-          const amt=parseFloat(amount);const isIncome=txType==="income";
-          const newTx={id:Date.now(),type:txType,desc,tag:tag||"",note:note||"",amount:amt,date:date||new Date().toISOString().slice(0,10)};
-          setBanks(bs=>bs.map(b=>b.id!==bank.id?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
-        }else if(action.type==="transfer"){
-          const{bankName,fromEnvelope,toEnvelope,amount}=action;
-          const bank=banks.find(b=>b.name.toLowerCase().includes(bankName.toLowerCase()));if(!bank)return;
-          const fromId=bank.envelopes.find(e=>e.name.toLowerCase().includes(fromEnvelope.toLowerCase()))?.id;
-          const toId=bank.envelopes.find(e=>e.name.toLowerCase().includes(toEnvelope.toLowerCase()))?.id;
-          if(!fromId||!toId)return;const amt=parseFloat(amount);
-          setBanks(bs=>bs.map(b=>b.id!==bank.id?b:{...b,envelopes:b.envelopes.map(e=>e.id===fromId?{...e,balance:e.balance-amt}:e.id===toId?{...e,balance:e.balance+amt}:e)}));
-        }else if(action.type==="update_crypto"){
-          setCrypto(h=>h.map(x=>x.coin.toLowerCase()===action.coin.toLowerCase()?{...x,value:parseFloat(action.value)}:x));
-        }else if(action.type==="update_investment"){
-          setInvestments(i=>i.map(x=>x.name.toLowerCase().includes(action.name.toLowerCase())?{...x,value:parseFloat(action.value)}:x));
-        }
-      }catch(e){console.error(e);}
-    });
-  };
-
-  const send=async()=>{
-    if(!input.trim()||loading)return;
-    const userMsg={role:"user",content:input.trim()};
-    const newMsgs=[...messages,userMsg];
-    setMessages(newMsgs);setInput("");setLoading(true);
-    const systemPrompt=`You are a personal finance assistant. User's data:\n\n${buildDataSummary(banks,crypto,investments)}\n\nAvailable tags: ${tags.join(", ")||"none"}\n\nFor actions respond with a JSON block at END:\n\`\`\`actions\n[{"type":"add_transaction","bankName":"...","envelopeName":"...","txType":"income|expense","amount":0,"desc":"...","tag":"...","note":"...","date":"YYYY-MM-DD"}]\n\`\`\`\nOther types: transfer({bankName,fromEnvelope,toEnvelope,amount}), update_crypto({coin,value}), update_investment({name,value}). Confirm actions in plain English first. Be concise.`;
-    try{
-      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":import.meta.env.VITE_ANTHROPIC_API_KEY,"anthropic-version":"2023-06-01"},body:JSON.stringify({model:"claude-sonnet-4-6",max_tokens:1000,system:systemPrompt,messages:newMsgs.map(m=>({role:m.role,content:m.content}))})});
-      const data=await res.json();
-      const raw=data.content?.[0]?.text||"Sorry, couldn't process that.";
-      const actionMatch=raw.match(/```actions\n([\s\S]*?)```/);
-      if(actionMatch){try{applyActions(JSON.parse(actionMatch[1]));}catch(e){console.error(e);}}
-      setMessages(m=>[...m,{role:"assistant",content:raw.replace(/```actions[\s\S]*?```/g,"").trim()}]);
-    }catch(e){setMessages(m=>[...m,{role:"assistant",content:"Something went wrong."}]);}
-    setLoading(false);
-  };
-
-  return (
-    <div style={{display:"flex",flexDirection:"column",height:"60vh"}}>
-      <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:12,marginBottom:12}}>
-        {messages.map((m,i)=>(
-          <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
-            <div style={{maxWidth:"80%",background:m.role==="user"?AI_COLOR:"#1e2130",borderRadius:m.role==="user"?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"10px 14px",fontSize:14,color:"#f1f5f9",lineHeight:1.5,whiteSpace:"pre-wrap"}}>{m.content}</div>
-          </div>
-        ))}
-        {loading&&<div style={{display:"flex"}}><div style={{background:"#1e2130",borderRadius:"12px 12px 12px 2px",padding:"10px 14px",fontSize:14,color:"#64748b"}}>Thinking…</div></div>}
-        <div ref={bottomRef}/>
-      </div>
-      <div style={{display:"flex",gap:8}}>
-        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&!e.shiftKey&&send()} placeholder='e.g. "Add ₱3000 food expense to BDO"' style={{flex:1,background:"#1e2130",border:"1px solid #334155",borderRadius:10,padding:"10px 14px",color:"#f1f5f9",fontSize:14}}/>
-        <Btn color={AI_COLOR} onClick={send}>Send</Btn>
-      </div>
-    </div>
-  );
-}
-
 // ── Root ──
 export default function FinanceTracker({ userId, userEmail, onSignOut }) {
   const [tab,setTab]=useState(0);
@@ -874,7 +787,7 @@ export default function FinanceTracker({ userId, userEmail, onSignOut }) {
     if (parsed.notes !== undefined) setNotes(parsed.notes);
   };
 
-  const TAB_COLORS=["#3B82F6","#3B82F6","#F59E0B","#8B5CF6","#06B6D4","#10B981","#EC4899"];
+  const TAB_COLORS=["#3B82F6","#3B82F6","#F59E0B","#8B5CF6","#06B6D4","#10B981"];
 
   return (
     <div style={{minHeight:"100vh",background:"#0f1117",color:"#f1f5f9",fontFamily:"system-ui,sans-serif"}}>
@@ -906,7 +819,6 @@ export default function FinanceTracker({ userId, userEmail, onSignOut }) {
         {tab===3&&<InvestSection investments={investments} setInvestments={setInvestments}/>}
         {tab===4&&<AnalyticsSection banks={banks} tags={tags}/>}
         {tab===5&&<NotesSection notes={notes} setNotes={setNotes}/>}
-        {tab===6&&<AIAssistant banks={banks} crypto={crypto} investments={investments} setBanks={setBanks} setCrypto={setCrypto} setInvestments={setInvestments} tags={tags}/>}
       </div>
     </div>
   );
