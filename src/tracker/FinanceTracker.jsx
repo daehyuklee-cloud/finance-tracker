@@ -845,7 +845,7 @@ export default function FinanceTracker({ userId, userEmail, onSignOut }) {
             ):(
               <div style={{fontSize:22,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>💰 {appName}<button onClick={()=>setEditName(true)} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,opacity:0.6}}>✏️</button></div>
             )}
-            <div style={{fontSize:13,color:T.faint}}>managing your finances in one place</div>
+           
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:14}}>{theme==="dark"?"☀️":"🌙"}</button>
