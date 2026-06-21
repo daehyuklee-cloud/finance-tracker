@@ -1,5 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { loadData, saveData } from "../db";
+import { loadData, saveData, syncWhenOnline } from "../db";
+
+function useOnlineStatus() {
+  const [online, setOnline] = useState(navigator.onLine);
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+  return online;
+}
 
 const TABS = ["Dashboard", "Banks", "Investments", "Analytics", "Notes", "Settings"];
 const COLORS_LIST = ["#3B82F6","#10B981","#F59E0B","#8B5CF6","#EC4899","#06B6D4","#F97316","#84CC16","#EF4444","#14B8A6"];
@@ -116,11 +128,12 @@ function Btn({ children, color="#3B82F6", outline, small, ...p }) {
 function UndoBar({ undo, redo, canUndo, canRedo }) {
   return (<div style={{display:"flex",gap:6,marginBottom:14}}><button onClick={undo} disabled={!canUndo} style={{background:canUndo?T.card:T.card2,border:`1px solid ${T.border}`,color:canUndo?T.text:T.faint,borderRadius:8,padding:"5px 12px",cursor:canUndo?"pointer":"not-allowed",fontSize:13}}>↩ Undo</button><button onClick={redo} disabled={!canRedo} style={{background:canRedo?T.card:T.card2,border:`1px solid ${T.border}`,color:canRedo?T.text:T.faint,borderRadius:8,padding:"5px 12px",cursor:canRedo?"pointer":"not-allowed",fontSize:13}}>↪ Redo</button></div>);
 }
-function SyncBar({ status }) {
-  const colors={idle:T.faint,saving:"#F59E0B",saved:"#10B981",error:"#ef4444",loading:"#3B82F6"};
-  const icons={idle:"☁️",saving:"⏳",saved:"✓",error:"⚠️",loading:"⏳"};
-  const labels={idle:"Ready",saving:"Saving…",saved:"Saved",error:"Failed",loading:"Loading…"};
-  return <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:colors[status],padding:"4px 10px",background:T.card,borderRadius:8}}><span>{icons[status]}</span><span>{labels[status]}</span></div>;
+function SyncBar({ status, isOnline }) {
+  const colors={idle:T.faint,saving:"#F59E0B",saved:"#10B981",error:"#ef4444",loading:"#3B82F6",offline:"#F97316"};
+  const icons={idle:"☁️",saving:"⏳",saved:"✓",error:"⚠️",loading:"⏳",offline:"📵"};
+  const labels={idle:"Ready",saving:"Saving…",saved:"Saved",error:"Failed",loading:"Loading…",offline:"Offline"};
+  const s = !isOnline ? "offline" : status;
+  return <div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:colors[s],padding:"4px 10px",background:T.card,borderRadius:8}}><span>{icons[s]}</span><span>{labels[s]}</span></div>;
 }
 
 function makeBank(name, currency, balance, color) {
@@ -461,7 +474,9 @@ export default function FinanceTracker({ userId, userEmail, userName, userPhoto,
   const [overviewCur,setOverviewCur]=useState("USD");
   const [hideTotals,setHideTotals]=useState(false);
   const [syncStatus,setSyncStatus]=useState("loading");
+  const isOnline = useOnlineStatus();
   const saveTimerRef=useRef(null); const initialLoadDone=useRef(false);
+  const getCurrentPayload = useRef(null);
 
   useEffect(()=>{
     (async()=>{
@@ -489,10 +504,18 @@ export default function FinanceTracker({ userId, userEmail, userName, userPhoto,
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
+    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur});
     setSyncStatus("saving"); if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
-    saveTimerRef.current=setTimeout(async()=>{await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur});setSyncStatus("saved");},2000);
+    saveTimerRef.current=setTimeout(async()=>{await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur});setSyncStatus(isOnline?"saved":"offline");},2000);
     return()=>clearTimeout(saveTimerRef.current);
-  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,userId]);
+  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,userId,isOnline]);
+
+  // Register online sync handler
+  useEffect(()=>{
+    if(!initialLoadDone.current) return;
+    const unsub = syncWhenOnline(userId, ()=>getCurrentPayload.current?.()??{});
+    return ()=>{ unsub.then(fn=>fn?.()); };
+  },[userId]);
 
   const importBackup=p=>{if(p.banks)setBanks(p.banks);if(p.investments)setInvestments(p.investments);if(p.tags)setTags(p.tags);if(Array.isArray(p.notes))setNotes(p.notes);if(p.theme)setTheme(p.theme);if(p.appName)setAppName(p.appName);if(p.profile)setProfile(p.profile);};
   const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur});
@@ -504,7 +527,7 @@ export default function FinanceTracker({ userId, userEmail, userName, userPhoto,
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:22,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>💰 {appName}</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <SyncBar status={syncStatus}/>
+            <SyncBar status={syncStatus} isOnline={isOnline}/>
             <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:14}}>{theme==="dark"?"☀️":"🌙"}</button>
             <button onClick={onSignOut} style={{background:"transparent",border:`1px solid ${T.border}`,color:T.subtext,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12}}>Sign out</button>
           </div>
