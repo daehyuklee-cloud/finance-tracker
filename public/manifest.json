@@ -1,6 +1,6 @@
 {
-  "name": "Finance Tracker",
-  "short_name": "Finance",
+  "name": "acountee",
+  "short_name": "acountee",
   "description": "Managing Your Finances in One Place",
   "start_url": "/",
   "display": "standalone",
