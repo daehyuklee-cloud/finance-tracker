@@ -28,8 +28,8 @@ export default function App() {
     <div style={{ minHeight: "100vh", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui", padding: 16 }}>
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 40, marginBottom: 12 }}>💰</div>
-        <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>Finance Tracker</div>
-        <div style={{ fontSize: 14, color: "#64748b", marginBottom: 32 }}>Managing Your Finances in One Place 😃</div>
+        <div style={{ fontSize: 28, fontWeight: 800, color: "#0f172a", marginBottom: 8 }}>acountee</div>
+        <div style={{ fontSize: 14, color: "#64748b", marginBottom: 32 }}>Managing Your Finances in One Place</div>
         <button
           onClick={signInWithGoogle}
           style={{ background: "#fff", color: "#0f172a", border: "1px solid #e2e8f0", borderRadius: 12, padding: "12px 28px", fontSize: 15, fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 10, margin: "0 auto", boxShadow: "0 2px 8px rgba(0,0,0,0.06)" }}
