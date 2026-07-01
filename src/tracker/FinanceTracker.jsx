@@ -156,11 +156,13 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
     const a=parseFloat(amt)||0;
     const f=parseFloat(fee)||0;
     const total=a+f;
-    const srcEnv=srcEnvs.find(e=>e.id===fromEnvId);
-    const destEnv=destEnvs.find(e=>e.id===toEnvId);
-    if(!srcEnv||!destEnv)return;
-    if(String(toBank)===String(bank.id)&&fromEnvId===toEnvId){alert("Source and destination must differ.");return;}
-    if(srcEnv.balance<total){alert(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)}.`);return;}
+    const srcEnv=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
+    const destEnv=destEnvs.find(e=>String(e.id)===String(toEnvId));
+    if(!srcEnv){alert("Please select a source envelope.");return;}
+    if(!destEnv){alert("Please select a destination envelope.");return;}
+    if(String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){alert("Source and destination must differ.");return;}
+    if(a<=0){alert("Please enter an amount greater than 0.");return;}
+    if(srcEnv.balance<total){alert(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source only has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
     const rec=isCross?(parseFloat(received)||0):a;
     if(isCross&&!rec){alert("Please enter the amount received in the destination currency.");return;}
     onTransfer({srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:destBank.currency});
