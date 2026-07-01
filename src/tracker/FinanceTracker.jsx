@@ -172,7 +172,7 @@ function TransferModal({ bank, onClose, onTransfer }) {
   return (<Modal title="Transfer Between Envelopes" onClose={onClose}><Sel label="From" value={from} onChange={e=>setFrom(e.target.value)}>{envs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(bank.currency)}{fmtNum(e.balance)})</option>)}</Sel><Sel label="To" value={to} onChange={e=>setTo(e.target.value)}>{envs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(bank.currency)}{fmtNum(e.balance)})</option>)}</Sel><Inp label="Amount" type="number" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00"/><Btn color={color} onClick={doTransfer} style={{width:"100%"}}>Transfer</Btn></Modal>);
 }
 
-function EnvelopeView({ bank, bankId, setBanks, tags, allBanks }) {
+function EnvelopeView({ bank, bankId, setBanks, tags }) {
   const color = bankColor(bank); const currency = bank.currency;
   const [showAdd,setShowAdd]=useState(false); const [showTx,setShowTx]=useState(null); const [showHist,setShowHist]=useState(null);
   const [editEnv,setEditEnv]=useState(null); const [editTx,setEditTx]=useState(null); const [confirmDelTx,setConfirmDelTx]=useState(null); const [confirmDelEnv,setConfirmDelEnv]=useState(null);
@@ -273,7 +273,7 @@ function BanksSection({ banks, setBanks, tags }) {
           <div style={{display:"flex",flexDirection:"column",gap:10}}>{cBanks.map(bk=>{const color=bankColor(bk);return (
             <div key={bk.id} style={{background:T.card,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden"}}>
               <div style={{padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:4,height:36,borderRadius:2,background:color}}/><div><div style={{fontWeight:600,fontSize:15,color:T.text}}>{bk.name}</div><div style={{fontSize:20,fontWeight:700,color,marginTop:2}}>{sym(bk.currency)}{fmtNum(bankTotal(bk))}{globalConv&&<ConversionBadge amount={bankTotal(bk)} fromCurrency={bk.currency} toCurrency={globalConv}/>}</div><div style={{fontSize:11,color:T.faint,marginTop:2}}>{(bk.envelopes||[]).length} envelopes</div></div></div><div style={{display:"flex",gap:6}}><Btn small outline color={T.subtext} onClick={()=>setEditBank({id:bk.id,name:bk.name,balance:bankTotal(bk),color:bankColor(bk)})}>✏️</Btn><Btn small outline color={color} onClick={()=>toggle(bk.id)}>{expandedSet[bk.id]?"▲":"▼"}</Btn><Btn small outline color="#ef4444" onClick={()=>setConfirmDel({id:bk.id,name:bk.name})}>🗑</Btn></div></div>
-              {expandedSet[bk.id]&&<div style={{borderTop:`1px solid ${T.border}`,padding:"12px 16px"}}><EnvelopeView bank={bk} bankId={bk.id} setBanks={setBanks} tags={tags} allBanks={banks}/></div>}
+              {expandedSet[bk.id]&&<div style={{borderTop:`1px solid ${T.border}`,padding:"12px 16px"}}><EnvelopeView bank={bk} bankId={bk.id} setBanks={setBanks} tags={tags}/></div>}
             </div>
           );})}</div>
         </div>
@@ -587,7 +587,7 @@ export default function FinanceTracker({ userId, userEmail, userName, userPhoto,
       <div style={{maxWidth:680,margin:"0 auto",padding:"0 16px 40px"}}>
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:22,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>💰 {appName}</div>
-          <div style={{fontSize:11,color:T.faint,marginTop:2}}>v5.1</div>
+          <div style={{fontSize:11,color:T.faint,marginTop:2}}>v5.1.1</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <SyncBar status={syncStatus} isOnline={isOnline}/>
             <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:14}}>{theme==="dark"?"☀️":"🌙"}</button>
