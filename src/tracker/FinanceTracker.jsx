@@ -174,7 +174,7 @@ function TransferModal({ bank, onClose, onTransfer }) {
 
 function EnvelopeView({ bank, bankId, setBanks, tags, allBanks }) {
   const color = bankColor(bank); const currency = bank.currency;
-  const [showAdd,setShowAdd]=useState(false); const [showTx,setShowTx]=useState(null); const [showHist,setShowHist]=useState(null); const [showTransfer,setShowTransfer]=useState(false);
+  const [showAdd,setShowAdd]=useState(false); const [showTx,setShowTx]=useState(null); const [showHist,setShowHist]=useState(null);
   const [editEnv,setEditEnv]=useState(null); const [editTx,setEditTx]=useState(null); const [confirmDelTx,setConfirmDelTx]=useState(null); const [confirmDelEnv,setConfirmDelEnv]=useState(null);
   const [envName,setEnvName]=useState(""); const [envBal,setEnvBal]=useState(""); const [envGoal,setEnvGoal]=useState(""); const [envEmoji,setEnvEmoji]=useState("🗂️"); const [convCurrency,setConvCurrency]=useState("");
   const [tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:new Date().toISOString().slice(0,10)});
@@ -207,7 +207,7 @@ function EnvelopeView({ bank, bankId, setBanks, tags, allBanks }) {
     <div style={{marginTop:12}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:13,color:T.subtext}}>Envelopes</span><select value={convCurrency} onChange={e=>setConvCurrency(e.target.value)} style={{background:T.input,border:`1px solid ${T.border}`,borderRadius:6,padding:"2px 6px",color:T.faint,fontSize:11}}><option value="">+ Convert</option>{CURRENCY_LIST.filter(c=>c!==currency).map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-        <div style={{display:"flex",gap:6}}><Btn small outline color={color} onClick={()=>setShowTransfer(true)}>⇄</Btn><Btn small color={color} onClick={()=>setShowAdd(true)}>+ Envelope</Btn></div>
+        <Btn small color={color} onClick={()=>setShowAdd(true)}>+ Envelope</Btn>
       </div>
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {envelopes.map(e=>(
@@ -237,19 +237,33 @@ function EnvelopeView({ bank, bankId, setBanks, tags, allBanks }) {
       {showTx&&<Modal title={`Add Transaction → ${envelopes.find(e=>e.id===showTx)?.name}`} onClose={()=>setShowTx(null)} isDirty={!!tx.desc||!!tx.amount}><div style={{display:"flex",gap:8,marginBottom:12}}>{["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={tx.type!==t} onClick={()=>setTx(x=>({...x,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}</div><Inp label="Description" value={tx.desc} onChange={e=>setTx(x=>({...x,desc:e.target.value}))} placeholder="e.g. Salary, Groceries"/><Inp label="Amount" type="number" value={tx.amount} onChange={e=>setTx(x=>({...x,amount:e.target.value}))} placeholder="0.00"/><Sel label="Tag (optional)" value={tx.tag} onChange={e=>setTx(x=>({...x,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel><Inp label="Note (optional)" value={tx.note} onChange={e=>setTx(x=>({...x,note:e.target.value}))} placeholder="Any notes..."/><Inp label="Date" type="date" value={tx.date} onChange={e=>setTx(x=>({...x,date:e.target.value}))}/><Btn color={color} onClick={addTx} style={{width:"100%"}}>Add Transaction</Btn></Modal>}
       {showHist&&<Modal title={`${histEnv?.name} · History`} onClose={()=>setShowHist(null)} isDirty={false}>{histEnv?.transactions.length===0&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No transactions yet.</div>}<div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:360,overflowY:"auto"}}>{histEnv?.transactions.map(t=>(<div key={t.id} style={{background:T.card2,borderRadius:8,padding:"8px 12px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:13,color:T.text}}>{t.desc}</div><div style={{fontSize:11,color:T.faint}}>{t.date}{t.tag?<span style={{marginLeft:6,background:T.card,borderRadius:4,padding:"1px 6px"}}>{t.tag}</span>:null}</div>{t.note&&<div style={{fontSize:11,color:T.faint,marginTop:2,fontStyle:"italic"}}>{t.note}</div>}</div><div style={{display:"flex",gap:6,alignItems:"center"}}><span style={{color:t.type==="income"?"#10B981":"#ef4444",fontWeight:600}}>{t.type==="income"?"+":"-"}{sym(currency)}{fmtNum(t.amount)}</span><button onClick={()=>setEditTx({envId:showHist,tx:t})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:13}}>✏️</button><button onClick={()=>setConfirmDelTx({envId:showHist,txId:t.id,desc:t.desc})} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer"}}>✕</button></div></div></div>))}</div></Modal>}
       {editTx&&<TxEditModal tx={editTx.tx} tags={tags} onSave={updated=>saveTxEdit(editTx.envId,updated)} onClose={()=>setEditTx(null)}/>}
-      {showTransfer&&<TransferModal bank={bank} allBanks={allBanks} onClose={()=>setShowTransfer(false)} onTransfer={doTransfer}/>}
     </div>
   );
 }
 
 function BanksSection({ banks, setBanks, tags }) {
   const [showBank,setShowBank]=useState(false); const [expandedSet,setExpandedSet]=useState({}); const [editBank,setEditBank]=useState(null); const [confirmDel,setConfirmDel]=useState(null);
+  const [transferBank,setTransferBank]=useState(null);
   const [bankName,setBankName]=useState(""); const [bankCurrency,setBankCurrency]=useState("PHP"); const [bankBal,setBankBal]=useState(""); const [bankColorPick,setBankColorPick]=useState(BANK_COLOR_CHOICES[0]); const [globalConv,setGlobalConv]=useState("");
   const grouped = banks.reduce((acc,b)=>{(acc[b.currency]=acc[b.currency]||[]).push(b);return acc;},{});
   const toggle=id=>setExpandedSet(s=>({...s,[id]:!s[id]}));
   const addBank=()=>{if(!bankName.trim())return;setBanks(b=>[...b,makeBank(bankName.trim(),bankCurrency,parseFloat(bankBal)||0,bankColorPick)]);setBankName("");setBankBal("");setShowBank(false);};
   const saveBankEdit=()=>{const newTotal=parseFloat(editBank.balance);setBanks(bs=>bs.map(b=>{if(b.id!==editBank.id)return b;let envelopes=b.envelopes;if(!isNaN(newTotal)&&newTotal!==bankTotal(b)){const diff=newTotal-bankTotal(b);envelopes=b.envelopes.map(e=>e.id===UNALLOC_ID?{...e,balance:e.balance+diff}:e);}return{...b,name:editBank.name,color:editBank.color,envelopes};}));setEditBank(null);};
   const delBank=id=>{setBanks(b=>b.filter(x=>x.id!==id));setConfirmDel(null);};
+
+  const doTransfer=({ srcEnv, destEnv, destBank, amt, fee, received, isCross, srcCurrency, destCurrency })=>{
+    const totalDeducted=amt+fee;
+    const date=new Date().toISOString().slice(0,10);
+    const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
+    const destTx={id:Date.now()+1,type:"income",desc:`Transfer from ${transferBank.name}${isCross?` · ${sym(srcCurrency)}${fmtNum(amt)} sent`:""}`,amount:received,tag:"Transfer",note:"",date};
+    setBanks(bs=>bs.map(b=>{
+      if(b.id===transferBank.id) return {...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>e.id!==srcEnv.id?e:{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]})};
+      if(b.id===destBank.id) return {...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>e.id!==destEnv.id?e:{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]})};
+      return b;
+    }));
+    setTransferBank(null);
+  };
+
   return (
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:18,fontWeight:700,color:T.text}}>All Banks</span><select value={globalConv} onChange={e=>setGlobalConv(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",color:T.faint,fontSize:12}}><option value="">Convert →</option>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c}</option>)}</select></div><Btn color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn></div>
@@ -264,6 +278,7 @@ function BanksSection({ banks, setBanks, tags }) {
           );})}</div>
         </div>
       );})}
+      {transferBank&&<TransferModal bank={transferBank} allBanks={banks} onClose={()=>setTransferBank(null)} onTransfer={doTransfer}/>}
       {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail="All its envelopes and transactions will be removed." requireDel onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
       {showBank&&<Modal title="Add Bank" onClose={()=>setShowBank(false)} isDirty={!!bankName||!!bankBal}><Inp label="Bank Name" value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="e.g. BDO, DBS, Chase"/><Sel label="Currency" value={bankCurrency} onChange={e=>setBankCurrency(e.target.value)}>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c} — {CURRENCY_SYMBOLS[c]}</option>)}</Sel><div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Color</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{BANK_COLOR_CHOICES.map(c=><button key={c} onClick={()=>setBankColorPick(c)} style={{width:28,height:28,borderRadius:8,background:c,border:bankColorPick===c?"3px solid #fff":"1px solid #00000033",cursor:"pointer"}}/>)}</div><Inp label="Starting Balance" type="number" value={bankBal} onChange={e=>setBankBal(e.target.value)} placeholder="0.00"/><Btn color={bankColorPick} onClick={addBank} style={{width:"100%"}}>Add Bank</Btn></Modal>}
       {editBank&&<Modal title="Edit Bank" onClose={()=>setEditBank(null)} isDirty={true}><Inp label="Bank Name" value={editBank.name} onChange={e=>setEditBank(v=>({...v,name:e.target.value}))}/><Inp label="Total Balance (adjusts Unallocated)" type="number" value={editBank.balance} onChange={e=>setEditBank(v=>({...v,balance:e.target.value}))}/><div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Color</div><div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{BANK_COLOR_CHOICES.map(c=><button key={c} onClick={()=>setEditBank(v=>({...v,color:c}))} style={{width:28,height:28,borderRadius:8,background:c,border:editBank.color===c?"3px solid #fff":"1px solid #00000033",cursor:"pointer"}}/>)}</div><Btn color={editBank.color} onClick={saveBankEdit} style={{width:"100%"}}>Save</Btn></Modal>}
@@ -572,6 +587,7 @@ export default function FinanceTracker({ userId, userEmail, userName, userPhoto,
       <div style={{maxWidth:680,margin:"0 auto",padding:"0 16px 40px"}}>
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div style={{fontSize:22,fontWeight:700,display:"flex",alignItems:"center",gap:8}}>💰 {appName}</div>
+          <div style={{fontSize:11,color:T.faint,marginTop:2}}>v5.1</div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <SyncBar status={syncStatus} isOnline={isOnline}/>
             <button onClick={()=>setTheme(t=>t==="dark"?"light":"dark")} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:14}}>{theme==="dark"?"☀️":"🌙"}</button>
