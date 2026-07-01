@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.1.1";
+const VERSION = "v5.1.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -219,7 +219,17 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   const envelopes=bank.envelopes||[]; const unallocEnv=envelopes.find(e=>e.id===UNALLOC_ID);
   const updateBank=fn=>setBanks(bs=>bs.map(b=>b.id!==bankId?b:fn(b)));
 
-  const addEnvelope=()=>{if(!envName.trim())return;const amt=parseFloat(envBal)||0;if(unallocEnv&&amt>unallocEnv.balance+0.001){alert("Not enough in Unallocated!");return;}updateBank(b=>({...b,envelopes:b.envelopes.map(e=>e.id!==UNALLOC_ID?e:{...e,balance:e.balance-amt}).concat([{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,transactions:[]}])}));setEnvName("");setEnvBal("");setEnvGoal("");setEnvEmoji("🗂️");setShowAdd(false);};
+  const addEnvelope=()=>{
+    if(!envName.trim())return;
+    const amt=parseFloat(envBal)||0;
+    // Add envelope with its own amount — bank balance grows to include it
+    updateBank(b=>({
+      ...b,
+      balance:b.balance+amt,
+      envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,transactions:[]}]
+    }));
+    setEnvName("");setEnvBal("");setEnvGoal("");setEnvEmoji("🗂️");setShowAdd(false);
+  };
   const saveEnvEdit=()=>{updateBank(b=>({...b,envelopes:b.envelopes.map(e=>e.id!==editEnv.id?e:{...e,name:editEnv.name,emoji:editEnv.emoji,goal:parseFloat(editEnv.goal)||null})}));setEditEnv(null);};
   const delEnvelope=envId=>{updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);return{...b,envelopes:b.envelopes.filter(e=>e.id!==envId).map(e=>e.id===UNALLOC_ID?{...e,balance:e.balance+(env?.balance||0)}:e)};});setConfirmDelEnv(null);};
   const addTx=()=>{if(!tx.desc||!tx.amount)return;const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";const newTx={id:Date.now(),...tx,amount:amt};updateBank(b=>({...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:new Date().toISOString().slice(0,10)});setShowTx(null);};
@@ -268,10 +278,9 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
       {confirmDelTx&&<ConfirmModal message={`Delete transaction "${confirmDelTx.desc}"?`} onConfirm={()=>delTx(confirmDelTx.envId,confirmDelTx.txId)} onClose={()=>setConfirmDelTx(null)}/>}
 
       {showAdd&&<Modal title="New Envelope" onClose={()=>setShowAdd(false)} isDirty={!!envName||!!envBal||!!envGoal}>
-        <div style={{fontSize:13,color:T.subtext,marginBottom:12}}>Available: <strong style={{color}}>{sym(currency)}{fmtNum(unallocEnv?.balance||0)}</strong></div>
         <Inp label="Name" value={envName} onChange={e=>setEnvName(e.target.value)} placeholder="e.g. Rent, Emergency"/>
         <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Icon</div><EmojiPicker value={envEmoji} onPick={setEnvEmoji}/>
-        <Inp label="Allocate Amount" type="number" value={envBal} onChange={e=>setEnvBal(e.target.value)} placeholder="0.00"/>
+        <Inp label="Starting Amount" type="number" value={envBal} onChange={e=>setEnvBal(e.target.value)} placeholder="0.00"/>
         <Inp label="Goal (optional)" type="number" value={envGoal} onChange={e=>setEnvGoal(e.target.value)} placeholder="e.g. 10000"/>
         <Btn color={color} onClick={addEnvelope} style={{width:"100%"}}>Create Envelope</Btn>
       </Modal>}
@@ -334,11 +343,17 @@ function BanksSection({banks,setBanks,tags}){
   const doTransfer=({srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency})=>{
     const totalDeducted=amt+fee;
     const date=new Date().toISOString().slice(0,10);
+    const srcBankId=transferBank.id;
+    const destBankId=destBank.id;
     const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
     const destTx={id:Date.now()+1,type:"income",desc:`Transfer from ${transferBank.name}${isCross?` · ${sym(srcCurrency)}${fmtNum(amt)} sent`:""}`,amount:received,tag:"Transfer",note:"",date};
     setBanks(bs=>bs.map(b=>{
-      if(b.id===transferBank.id)return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>e.id!==srcEnv.id?e:{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]})};
-      if(b.id===destBank.id)return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>e.id!==destEnv.id?e:{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]})};
+      if(String(b.id)===String(srcBankId)){
+        return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
+      }
+      if(String(b.id)===String(destBankId)){
+        return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
+      }
       return b;
     }));
     setTransferBank(null);
