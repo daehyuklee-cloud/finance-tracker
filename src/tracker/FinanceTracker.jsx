@@ -298,26 +298,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
         <Btn color={color} onClick={saveEnvEdit} style={{width:"100%"}}>Save</Btn>
       </Modal>}
 
-      {showTx&&(()=>{
-        const [txErr,setTxErr]=useState("");
-        const submitTx=()=>{
-          if(!tx.desc){setTxErr("Please enter a description.");return;}
-          if(!tx.amount||parseFloat(tx.amount)<=0){setTxErr("Please enter a valid amount.");return;}
-          addTx();
-        };
-        return(
-        <Modal title={`Add Transaction → ${envelopes.find(e=>e.id===showTx)?.name}`} onClose={()=>setShowTx(null)} isDirty={!!tx.desc||!!tx.amount}>
-          <div style={{display:"flex",gap:8,marginBottom:12}}>{["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={tx.type!==t} onClick={()=>setTx(x=>({...x,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}</div>
-          <FormError msg={txErr}/>
-          <Inp label="Description" value={tx.desc} onChange={e=>{setTxErr("");setTx(x=>({...x,desc:e.target.value}));}} placeholder="e.g. Salary, Groceries"/>
-          <Inp label="Amount" type="number" value={tx.amount} onChange={e=>{setTxErr("");setTx(x=>({...x,amount:e.target.value}));}} placeholder="0.00"/>
-          <Sel label="Tag (optional)" value={tx.tag} onChange={e=>setTx(x=>({...x,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
-          <Inp label="Note (optional)" value={tx.note} onChange={e=>setTx(x=>({...x,note:e.target.value}))} placeholder="Any notes..."/>
-          <Inp label="Date" type="date" value={tx.date} onChange={e=>setTx(x=>({...x,date:e.target.value}))}/>
-          <Btn color={color} onClick={submitTx} style={{width:"100%"}}>Add Transaction</Btn>
-        </Modal>
-        );
-      })()}
+      {showTx&&<AddTxModal envName={envelopes.find(e=>e.id===showTx)?.name||""} tx={tx} setTx={setTx} tags={tags} color={color} onAdd={addTx} onClose={()=>setShowTx(null)}/>}
 
       {showHist&&<Modal title={`${histEnv?.name} · History`} onClose={()=>setShowHist(null)} isDirty={false}>
         {histEnv?.transactions.length===0&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No transactions yet.</div>}
