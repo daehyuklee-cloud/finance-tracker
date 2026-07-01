@@ -16,14 +16,14 @@ function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 function getCurrencyColor(currency){ const idx=CURRENCY_LIST.indexOf(currency); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
 function bankColor(b){ return b.color||getCurrencyColor(b.currency); }
+function localDateStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
+function localDateTimeStr(d=new Date()){ return d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }
 
 const THEMES = {
   dark:{ bg:"#0f1117", card:"#1e2130", card2:"#0f1117", border:"#334155", text:"#f1f5f9", subtext:"#94a3b8", faint:"#475569", input:"#0f1117" },
   light:{ bg:"#f8fafc", card:"#ffffff", card2:"#f1f5f9", border:"#e2e8f0", text:"#0f172a", subtext:"#475569", faint:"#94a3b8", input:"#ffffff" }
 };
 let T = THEMES.light;
-
-function maskVal(str,hide){ return hide?"••••••":str; }
 
 // ── Exchange Rate ──
 const rateCache={};
@@ -41,7 +41,7 @@ async function fetchRate(from,to){
   }catch{return null;}
 }
 function useMultiConvert(items,target){
-  const [total,setTotal]=useState(null);
+  const[total,setTotal]=useState(null);
   useEffect(()=>{
     let active=true;
     (async()=>{let sum=0,ok=true;for(const it of items){const r=await fetchRate(it.currency,target);if(r===null){ok=false;break;}sum+=it.amount*r;}if(active)setTotal(ok?sum:null);})();
@@ -51,21 +51,19 @@ function useMultiConvert(items,target){
   return total;
 }
 function ConversionBadge({amount,fromCurrency,toCurrency,style}){
-  const [rate,setRate]=useState(null);
+  const[rate,setRate]=useState(null);
   useEffect(()=>{if(fromCurrency!==toCurrency)fetchRate(fromCurrency,toCurrency).then(setRate);},[fromCurrency,toCurrency]);
   if(fromCurrency===toCurrency||rate===null)return null;
   return <span style={{fontSize:11,color:T.faint,marginLeft:8,...style}}>≈ {sym(toCurrency)}{fmtNum(amount*rate)} {toCurrency}</span>;
 }
-
 function useOnlineStatus(){
-  const [online,setOnline]=useState(navigator.onLine);
+  const[online,setOnline]=useState(navigator.onLine);
   useEffect(()=>{const on=()=>setOnline(true);const off=()=>setOnline(false);window.addEventListener("online",on);window.addEventListener("offline",off);return()=>{window.removeEventListener("online",on);window.removeEventListener("offline",off);};},[]);
   return online;
 }
-
 function useUndoable(init){
-  const [history,setHistory]=useState([init]);
-  const [idx,setIdx]=useState(0);
+  const[history,setHistory]=useState([init]);
+  const[idx,setIdx]=useState(0);
   const val=history[idx];
   const set=useCallback((fn)=>{setHistory(h=>{const next=typeof fn==="function"?fn(h[idx]):fn;return[...h.slice(0,idx+1),next].slice(-MAX_HISTORY);});setIdx(i=>Math.min(i+1,MAX_HISTORY-1));},[idx]);
   const undo=useCallback(()=>setIdx(i=>Math.max(0,i-1)),[]);
@@ -73,6 +71,7 @@ function useUndoable(init){
   return[val,set,undo,redo,idx>0,idx<history.length-1];
 }
 
+// ── UI Primitives ──
 function Modal({title,onClose,children,isDirty=false,zIndex=100}){
   const requestClose=()=>{if(isDirty){if(window.confirm("You have unsaved changes. Close anyway?"))onClose();}else onClose();};
   return(
@@ -87,9 +86,8 @@ function Modal({title,onClose,children,isDirty=false,zIndex=100}){
     </div>
   );
 }
-
 function ConfirmModal({message,detail,confirmLabel="Delete",requireDel,onConfirm,onClose}){
-  const [val,setVal]=useState("");
+  const[val,setVal]=useState("");
   const ok=requireDel?val==="DEL":true;
   return(
     <Modal title="Please Confirm" onClose={onClose} isDirty={false} zIndex={200}>
@@ -103,7 +101,10 @@ function ConfirmModal({message,detail,confirmLabel="Delete",requireDel,onConfirm
     </Modal>
   );
 }
-
+function FormError({msg}){
+  if(!msg)return null;
+  return <div style={{background:"#ef444422",border:"1px solid #ef444466",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13,color:"#ef4444"}}>⚠️ {msg}</div>;
+}
 function Inp({label,...p}){return(<div style={{marginBottom:12}}>{label&&<div style={{fontSize:12,color:T.subtext,marginBottom:4}}>{label}</div>}<input {...p} style={{width:"100%",background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14,boxSizing:"border-box",...p.style}}/></div>);}
 function Sel({label,children,...p}){return(<div style={{marginBottom:12}}>{label&&<div style={{fontSize:12,color:T.subtext,marginBottom:4}}>{label}</div>}<select {...p} style={{width:"100%",background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14,...p.style}}>{children}</select></div>);}
 function Btn({children,color="#3B82F6",outline,small,...p}){return(<button {...p} style={{background:outline?"transparent":color,border:`1px solid ${color}`,color:outline?color:"#fff",borderRadius:8,padding:small?"4px 10px":"8px 16px",fontSize:small?12:14,cursor:"pointer",fontWeight:500,...p.style}}>{children}</button>);}
@@ -115,59 +116,91 @@ function SyncBar({status,isOnline}){
   const s=!isOnline?"offline":status;
   return<div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:colors[s],padding:"4px 10px",background:T.card,borderRadius:8}}><span>{icons[s]}</span><span>{labels[s]}</span></div>;
 }
-
-// Local date helpers
-function localDateStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
-function localDateTimeStr(d=new Date()){ return d.toLocaleString(undefined,{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}); }
-function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
-
 function EmojiPicker({value,onPick}){return(<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{ENVELOPE_EMOJIS.map(em=>(<button key={em} onClick={()=>onPick(em)} style={{fontSize:18,padding:"4px 6px",borderRadius:8,cursor:"pointer",background:value===em?"#3B82F6":T.input,border:`1px solid ${value===em?"#3B82F6":T.border}`}}>{em}</button>))}</div>);}
 
-function TxEditModal({tx,tags,onSave,onClose}){
-  const [form,setForm]=useState({...tx});
-  const isDirty=JSON.stringify(form)!==JSON.stringify(tx);
+function FormError({msg}){ if(!msg)return null; return <div style={{background:"#ef444422",border:"1px solid #ef444466",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:13,color:"#ef4444"}}>⚠️ {msg}</div>; }
+
+function makeBank(name,currency,balance,color){return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};}
+function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
+
+// ── Add Transaction Modal (proper component to avoid hooks-in-JSX issue) ──
+function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
+  const[err,setErr]=useState("");
+  const submit=()=>{
+    if(!tx.desc){setErr("Please enter a description.");return;}
+    if(!tx.amount||parseFloat(tx.amount)<=0){setErr("Please enter a valid amount greater than 0.");return;}
+    setErr("");
+    onAdd();
+  };
   return(
-    <Modal title="Edit Transaction" onClose={onClose} isDirty={isDirty}>
-      <div style={{display:"flex",gap:8,marginBottom:12}}>{["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={form.type!==t} onClick={()=>setForm(f=>({...f,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}</div>
-      <Inp label="Description" value={form.desc} onChange={e=>setForm(f=>({...f,desc:e.target.value}))}/>
-      <Inp label="Amount" type="number" value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))}/>
-      <Sel label="Tag" value={form.tag||""} onChange={e=>setForm(f=>({...f,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
-      <Inp label="Note" value={form.note||""} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
-      <Inp label="Date" type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
-      <Btn color="#3B82F6" onClick={()=>onSave({...form,amount:parseFloat(form.amount)||0})} style={{width:"100%"}}>Save Changes</Btn>
+    <Modal title={`Add Transaction → ${envName}`} onClose={onClose} isDirty={!!tx.desc||!!tx.amount}>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>
+        {["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={tx.type!==t} onClick={()=>setTx(x=>({...x,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}
+      </div>
+      <FormError msg={err}/>
+      <Inp label="Description" value={tx.desc} onChange={e=>{setErr("");setTx(x=>({...x,desc:e.target.value}));}} placeholder="e.g. Salary, Groceries"/>
+      <Inp label="Amount" type="number" value={tx.amount} onChange={e=>{setErr("");setTx(x=>({...x,amount:e.target.value}));}} placeholder="0.00"/>
+      <Sel label="Tag (optional)" value={tx.tag} onChange={e=>setTx(x=>({...x,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
+      <Inp label="Note (optional)" value={tx.note} onChange={e=>setTx(x=>({...x,note:e.target.value}))} placeholder="Any notes..."/>
+      <Inp label="Date" type="date" value={tx.date} onChange={e=>setTx(x=>({...x,date:e.target.value}))}/>
+      <Btn color={color} onClick={submit} style={{width:"100%"}}>Add Transaction</Btn>
     </Modal>
   );
 }
 
-// ── Transfer Modal (interbank) ──
+function TxEditModal({tx,tags,onSave,onClose}){
+  const[form,setForm]=useState({...tx});
+  const[err,setErr]=useState("");
+  const isDirty=JSON.stringify(form)!==JSON.stringify(tx);
+  const submit=()=>{
+    if(!form.desc){setErr("Please enter a description.");return;}
+    if(!form.amount||parseFloat(form.amount)<=0){setErr("Please enter a valid amount.");return;}
+    setErr("");onSave({...form,amount:parseFloat(form.amount)||0});
+  };
+  return(
+    <Modal title="Edit Transaction" onClose={onClose} isDirty={isDirty}>
+      <div style={{display:"flex",gap:8,marginBottom:12}}>{["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={form.type!==t} onClick={()=>setForm(f=>({...f,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}</div>
+      <FormError msg={err}/>
+      <Inp label="Description" value={form.desc} onChange={e=>{setErr("");setForm(f=>({...f,desc:e.target.value}));}}/>
+      <Inp label="Amount" type="number" value={form.amount} onChange={e=>{setErr("");setForm(f=>({...f,amount:e.target.value}));}}/>
+      <Sel label="Tag" value={form.tag||""} onChange={e=>setForm(f=>({...f,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
+      <Inp label="Note" value={form.note||""} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
+      <Inp label="Date" type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+      <Btn color="#3B82F6" onClick={submit} style={{width:"100%"}}>Save Changes</Btn>
+    </Modal>
+  );
+}
+
+// ── Transfer Modal ──
 function TransferModal({bank,allBanks,onClose,onTransfer}){
   const color=bankColor(bank);
-  const [fromEnvId,setFromEnvId]=useState(bank.envelopes[0]?.id||"");
-  const [toBank,setToBank]=useState(String(bank.id));
-  const [toEnvId,setToEnvId]=useState("");
-  const [amt,setAmt]=useState("");
-  const [fee,setFee]=useState("");
-  const [received,setReceived]=useState("");
+  const[fromEnvId,setFromEnvId]=useState(bank.envelopes[0]?.id||"");
+  const[toBank,setToBank]=useState(String(bank.id));
+  const[toEnvId,setToEnvId]=useState("");
+  const[amt,setAmt]=useState("");
+  const[fee,setFee]=useState("");
+  const[received,setReceived]=useState("");
+  const[err,setErr]=useState("");
   const srcEnvs=bank.envelopes||[];
   const destBank=allBanks.find(b=>String(b.id)===String(toBank));
   const destEnvs=destBank?.envelopes||[];
   const isCross=destBank&&destBank.currency!==bank.currency;
   const isDirty=!!amt||!!fee||!!received;
   useEffect(()=>{setToEnvId(destEnvs[0]?.id||"");},[toBank]);
-  const [transferErr,setTransferErr]=useState("");
   const doTransfer=()=>{
+    setErr("");
     const a=parseFloat(amt)||0;
     const f=parseFloat(fee)||0;
     const total=a+f;
     const srcEnv=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
     const destEnv=destEnvs.find(e=>String(e.id)===String(toEnvId));
-    if(!srcEnv){setTransferErr("Please select a source envelope.");return;}
-    if(!destEnv){setTransferErr("Please select a destination envelope.");return;}
-    if(String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){setTransferErr("Source and destination must differ.");return;}
-    if(a<=0){setTransferErr("Please enter an amount greater than 0.");return;}
-    if(srcEnv.balance<total){setTransferErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
+    if(!srcEnv){setErr("Please select a source envelope.");return;}
+    if(!destEnv){setErr("Please select a destination envelope.");return;}
+    if(String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){setErr("Source and destination must differ.");return;}
+    if(a<=0){setErr("Please enter an amount greater than 0.");return;}
+    if(srcEnv.balance<total){setErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
     const rec=isCross?(parseFloat(received)||0):a;
-    if(isCross&&!rec){setTransferErr("Please enter the amount received in the destination currency.");return;}
+    if(isCross&&!rec){setErr("Please enter the amount received in the destination currency.");return;}
     onTransfer({srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:destBank.currency});
     onClose();
   };
@@ -189,12 +222,12 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
           {destEnvs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(destBank?.currency)}{fmtNum(e.balance)})</option>)}
         </select>
       </div>
-      <Inp label={`Amount to send (${bank.currency})`} type="number" value={amt} onChange={e=>setAmt(e.target.value)} placeholder="0.00"/>
+      <Inp label={`Amount to send (${bank.currency})`} type="number" value={amt} onChange={e=>{setErr("");setAmt(e.target.value);}} placeholder="0.00"/>
       <Inp label={`Fee (${bank.currency}) — on top of transfer amount`} type="number" value={fee} onChange={e=>setFee(e.target.value)} placeholder="0.00 (optional)"/>
       {isCross&&(
         <div style={{background:"#F59E0B22",border:"1px solid #F59E0B44",borderRadius:8,padding:10,marginBottom:12}}>
           <div style={{fontSize:12,color:"#F59E0B",marginBottom:8}}>💱 Cross-currency transfer</div>
-          <Inp label={`Amount received in destination (${destBank?.currency})`} type="number" value={received} onChange={e=>setReceived(e.target.value)} placeholder="Enter exact amount received"/>
+          <Inp label={`Amount received in destination (${destBank?.currency})`} type="number" value={received} onChange={e=>{setErr("");setReceived(e.target.value);}} placeholder="Enter exact amount received"/>
         </div>
       )}
       {amt&&(
@@ -203,7 +236,7 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
           <div style={{marginTop:4}}>Destination receives: <strong style={{color:"#10B981"}}>{isCross?(received?`${sym(destBank?.currency)}${fmtNum(parseFloat(received)||0)}`:"—"):`${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)}`}</strong></div>
         </div>
       )}
-      <FormError msg={transferErr}/>
+      <FormError msg={err}/>
       <Btn color={color} onClick={doTransfer} style={{width:"100%"}}>Confirm Transfer</Btn>
     </Modal>
   );
@@ -212,33 +245,33 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
 // ── Envelope View ──
 function EnvelopeView({bank,bankId,setBanks,tags}){
   const color=bankColor(bank); const currency=bank.currency;
-  const [showAdd,setShowAdd]=useState(false);
-  const [showTx,setShowTx]=useState(null);
-  const [showHist,setShowHist]=useState(null);
-  const [editEnv,setEditEnv]=useState(null);
-  const [editTx,setEditTx]=useState(null);
-  const [confirmDelTx,setConfirmDelTx]=useState(null);
-  const [confirmDelEnv,setConfirmDelEnv]=useState(null);
-  const [envName,setEnvName]=useState(""); const [envBal,setEnvBal]=useState(""); const [envGoal,setEnvGoal]=useState(""); const [envEmoji,setEnvEmoji]=useState("🗂️");
-  const [convCurrency,setConvCurrency]=useState("");
-  const [tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:new Date().toISOString().slice(0,10)});
-  const envelopes=bank.envelopes||[]; const unallocEnv=envelopes.find(e=>e.id===UNALLOC_ID);
+  const[showAdd,setShowAdd]=useState(false);
+  const[showTx,setShowTx]=useState(null);
+  const[showHist,setShowHist]=useState(null);
+  const[editEnv,setEditEnv]=useState(null);
+  const[editTx,setEditTx]=useState(null);
+  const[confirmDelTx,setConfirmDelTx]=useState(null);
+  const[confirmDelEnv,setConfirmDelEnv]=useState(null);
+  const[envName,setEnvName]=useState("");const[envBal,setEnvBal]=useState("");const[envGoal,setEnvGoal]=useState("");const[envEmoji,setEnvEmoji]=useState("🗂️");
+  const[convCurrency,setConvCurrency]=useState("");
+  const[tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+  const envelopes=bank.envelopes||[];
   const updateBank=fn=>setBanks(bs=>bs.map(b=>b.id!==bankId?b:fn(b)));
 
   const addEnvelope=()=>{
     if(!envName.trim())return;
     const amt=parseFloat(envBal)||0;
-    // Add envelope with its own amount — bank balance grows to include it
-    updateBank(b=>({
-      ...b,
-      balance:b.balance+amt,
-      envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,transactions:[]}]
-    }));
+    updateBank(b=>({...b,balance:b.balance+amt,envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,transactions:[]}]}));
     setEnvName("");setEnvBal("");setEnvGoal("");setEnvEmoji("🗂️");setShowAdd(false);
   };
   const saveEnvEdit=()=>{updateBank(b=>({...b,envelopes:b.envelopes.map(e=>e.id!==editEnv.id?e:{...e,name:editEnv.name,emoji:editEnv.emoji,goal:parseFloat(editEnv.goal)||null})}));setEditEnv(null);};
-  const delEnvelope=envId=>{updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);return{...b,envelopes:b.envelopes.filter(e=>e.id!==envId).map(e=>e.id===UNALLOC_ID?{...e,balance:e.balance+(env?.balance||0)}:e)};});setConfirmDelEnv(null);};
-  const addTx=()=>{if(!tx.desc||!tx.amount)return;const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";const newTx={id:Date.now(),...tx,amount:amt};updateBank(b=>({...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));    setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});setShowTx(null);};
+  const delEnvelope=envId=>{updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);return{...b,balance:b.balance-(env?.balance||0),envelopes:b.envelopes.filter(e=>e.id!==envId)};});setConfirmDelEnv(null);};
+  const addTx=()=>{
+    const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";
+    const newTx={id:Date.now(),...tx,amount:amt};
+    updateBank(b=>({...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});setShowTx(null);
+  };
   const saveTxEdit=(envId,updated)=>{updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);const old=env.transactions.find(t=>t.id===updated.id);const oldD=old.type==="income"?old.amount:-old.amount;const newD=updated.type==="income"?updated.amount:-updated.amount;const diff=newD-oldD;return{...b,balance:b.balance+diff,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+diff,transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};});setEditTx(null);};
   const delTx=(envId,txId)=>{updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);const t=env?.transactions.find(x=>x.id===txId);if(!t)return b;const delta=t.type==="income"?-t.amount:t.amount;return{...b,balance:b.balance+delta,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+delta,transactions:e.transactions.filter(x=>x.id!==txId)})};});setConfirmDelTx(null);};
   const histEnv=envelopes.find(e=>e.id===showHist);
@@ -254,7 +287,6 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
         </div>
         <Btn small color={color} onClick={()=>setShowAdd(true)}>+ Envelope</Btn>
       </div>
-
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {envelopes.map(e=>(
           <div key={e.id} style={{background:T.card2,borderRadius:8,padding:"10px 12px",border:`1px solid ${e.isUnalloc?T.border:color+"33"}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
@@ -280,7 +312,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
         ))}
       </div>
 
-      {confirmDelEnv&&<ConfirmModal message={`Delete envelope "${confirmDelEnv.name}"?`} detail="Its balance returns to Unallocated." requireDel onConfirm={()=>delEnvelope(confirmDelEnv.id)} onClose={()=>setConfirmDelEnv(null)}/>}
+      {confirmDelEnv&&<ConfirmModal message={`Delete envelope "${confirmDelEnv.name}"?`} detail="This will remove the envelope and its balance from the bank total." requireDel onConfirm={()=>delEnvelope(confirmDelEnv.id)} onClose={()=>setConfirmDelEnv(null)}/>}
       {confirmDelTx&&<ConfirmModal message={`Delete transaction "${confirmDelTx.desc}"?`} onConfirm={()=>delTx(confirmDelTx.envId,confirmDelTx.txId)} onClose={()=>setConfirmDelTx(null)}/>}
 
       {showAdd&&<Modal title="New Envelope" onClose={()=>setShowAdd(false)} isDirty={!!envName||!!envBal||!!envGoal}>
@@ -325,33 +357,27 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
 
 // ── Banks Section ──
 function BanksSection({banks,setBanks,tags}){
-  const [showBank,setShowBank]=useState(false);
-  const [expandedSet,setExpandedSet]=useState({});
-  const [editBank,setEditBank]=useState(null);
-  const [confirmDel,setConfirmDel]=useState(null);
-  const [transferBank,setTransferBank]=useState(null);
-  const [bankName,setBankName]=useState(""); const [bankCurrency,setBankCurrency]=useState("PHP"); const [bankBal,setBankBal]=useState(""); const [bankColorPick,setBankColorPick]=useState(BANK_COLOR_CHOICES[0]);
-  const [globalConv,setGlobalConv]=useState("");
+  const[showBank,setShowBank]=useState(false);
+  const[expandedSet,setExpandedSet]=useState({});
+  const[editBank,setEditBank]=useState(null);
+  const[confirmDel,setConfirmDel]=useState(null);
+  const[transferBank,setTransferBank]=useState(null);
+  const[bankName,setBankName]=useState("");const[bankCurrency,setBankCurrency]=useState("PHP");const[bankBal,setBankBal]=useState("");const[bankColorPick,setBankColorPick]=useState(BANK_COLOR_CHOICES[0]);
+  const[globalConv,setGlobalConv]=useState("");
   const grouped=banks.reduce((acc,b)=>{(acc[b.currency]=acc[b.currency]||[]).push(b);return acc;},{});
   const toggle=id=>setExpandedSet(s=>({...s,[id]:!s[id]}));
   const addBank=()=>{if(!bankName.trim())return;setBanks(b=>[...b,makeBank(bankName.trim(),bankCurrency,parseFloat(bankBal)||0,bankColorPick)]);setBankName("");setBankBal("");setShowBank(false);};
   const saveBankEdit=()=>{const newTotal=parseFloat(editBank.balance);setBanks(bs=>bs.map(b=>{if(b.id!==editBank.id)return b;let envelopes=b.envelopes;if(!isNaN(newTotal)&&newTotal!==bankTotal(b)){const diff=newTotal-bankTotal(b);envelopes=b.envelopes.map(e=>e.id===UNALLOC_ID?{...e,balance:e.balance+diff}:e);}return{...b,name:editBank.name,color:editBank.color,envelopes};}));setEditBank(null);};
   const delBank=id=>{setBanks(b=>b.filter(x=>x.id!==id));setConfirmDel(null);};
-
   const doTransfer=({srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency})=>{
     const totalDeducted=amt+fee;
     const date=localDateStr();
-    const srcBankId=transferBank.id;
-    const destBankId=destBank.id;
+    const srcBankId=transferBank.id; const destBankId=destBank.id;
     const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
     const destTx={id:Date.now()+1,type:"income",desc:`Transfer from ${transferBank.name}${isCross?` · ${sym(srcCurrency)}${fmtNum(amt)} sent`:""}`,amount:received,tag:"Transfer",note:"",date};
     setBanks(bs=>bs.map(b=>{
-      if(String(b.id)===String(srcBankId)){
-        return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
-      }
-      if(String(b.id)===String(destBankId)){
-        return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
-      }
+      if(String(b.id)===String(srcBankId))return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
+      if(String(b.id)===String(destBankId))return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
       return b;
     }));
     setTransferBank(null);
@@ -368,11 +394,9 @@ function BanksSection({banks,setBanks,tags}){
         </div>
         <Btn color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn>
       </div>
-
       {banks.length===0&&<div style={{color:T.faint,textAlign:"center",padding:32}}>No banks yet.</div>}
-
       {Object.entries(grouped).map(([currency,cBanks])=>{
-        const total=cBanks.reduce((s,b)=>s+bankTotal(b),0); const gc=getCurrencyColor(currency);
+        const total=cBanks.reduce((s,b)=>s+bankTotal(b),0);const gc=getCurrencyColor(currency);
         return(
           <div key={currency} style={{marginBottom:24}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
@@ -409,10 +433,8 @@ function BanksSection({banks,setBanks,tags}){
           </div>
         );
       })}
-
       {transferBank&&<TransferModal bank={transferBank} allBanks={banks} onClose={()=>setTransferBank(null)} onTransfer={doTransfer}/>}
       {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail="All its envelopes and transactions will be removed." requireDel onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
-
       {showBank&&<Modal title="Add Bank" onClose={()=>setShowBank(false)} isDirty={!!bankName||!!bankBal}>
         <Inp label="Bank Name" value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="e.g. BDO, DBS, Chase"/>
         <Sel label="Currency" value={bankCurrency} onChange={e=>setBankCurrency(e.target.value)}>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c} — {CURRENCY_SYMBOLS[c]}</option>)}</Sel>
@@ -421,7 +443,6 @@ function BanksSection({banks,setBanks,tags}){
         <Inp label="Starting Balance" type="number" value={bankBal} onChange={e=>setBankBal(e.target.value)} placeholder="0.00"/>
         <Btn color={bankColorPick} onClick={addBank} style={{width:"100%"}}>Add Bank</Btn>
       </Modal>}
-
       {editBank&&<Modal title="Edit Bank" onClose={()=>setEditBank(null)} isDirty={true}>
         <Inp label="Bank Name" value={editBank.name} onChange={e=>setEditBank(v=>({...v,name:e.target.value}))}/>
         <Inp label="Total Balance (adjusts Unallocated)" type="number" value={editBank.balance} onChange={e=>setEditBank(v=>({...v,balance:e.target.value}))}/>
@@ -439,10 +460,11 @@ function subATHATL(s){const vals=(s.history||[]).map(h=>h.value);if(!vals.length
 function invTotals(inv){const items=inv.items||[];const value=items.reduce((s,i)=>s+(i.value||0),0);const cost=items.reduce((s,i)=>s+(i.cost||0),0);const g=value-cost;const pct=cost?(g/cost*100):0;return{value,cost,g,pct};}
 
 function InvestmentsSection({investments,setInvestments,hideTotals}){
-  const [showAddInv,setShowAddInv]=useState(false); const [editInv,setEditInv]=useState(null); const [confirmDelInv,setConfirmDelInv]=useState(null);
-  const [addItemTo,setAddItemTo]=useState(null); const [editItem,setEditItem]=useState(null); const [confirmDelItem,setConfirmDelItem]=useState(null);
-  const [showHist,setShowHist]=useState(null); const [updateValOf,setUpdateValOf]=useState(null); const [newVal,setNewVal]=useState("");
-  const [invForm,setInvForm]=useState({name:"",bucket:"Stocks"}); const [itemForm,setItemForm]=useState({name:"",currency:"USD",cost:"",value:"",notes:""}); const [overviewCur,setOverviewCur]=useState("USD");
+  const[showAddInv,setShowAddInv]=useState(false);const[editInv,setEditInv]=useState(null);const[confirmDelInv,setConfirmDelInv]=useState(null);
+  const[addItemTo,setAddItemTo]=useState(null);const[editItem,setEditItem]=useState(null);const[confirmDelItem,setConfirmDelItem]=useState(null);
+  const[showHist,setShowHist]=useState(null);const[updateValOf,setUpdateValOf]=useState(null);const[newVal,setNewVal]=useState("");
+  const[invForm,setInvForm]=useState({name:"",bucket:"Stocks"});const[itemForm,setItemForm]=useState({name:"",currency:"USD",cost:"",value:"",notes:""});
+  const[overviewCur,setOverviewCur]=useState("USD");
   const addInv=()=>{if(!invForm.name)return;setInvestments(i=>[...i,{id:Date.now(),name:invForm.name,bucket:invForm.bucket,items:[]}]);setInvForm({name:"",bucket:"Stocks"});setShowAddInv(false);};
   const saveInvEdit=()=>{setInvestments(invs=>invs.map(x=>x.id!==editInv.id?x:{...x,name:editInv.name,bucket:editInv.bucket}));setEditInv(null);};
   const delInv=id=>{setInvestments(i=>i.filter(x=>x.id!==id));setConfirmDelInv(null);};
@@ -453,35 +475,27 @@ function InvestmentsSection({investments,setInvestments,hideTotals}){
   const grouped=investments.reduce((acc,inv)=>{(acc[inv.bucket||"Other"]=acc[inv.bucket||"Other"]||[]).push(inv);return acc;},{});
   const allItems=investments.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})));
   const allCostItems=investments.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.cost||0,currency:it.currency})));
-  const grandValue=useMultiConvert(allItems,overviewCur); const grandCost=useMultiConvert(allCostItems,overviewCur);
-  const grandGain=(grandValue!==null&&grandCost!==null)?grandValue-grandCost:null; const grandPct=(grandGain!==null&&grandCost)?(grandGain/grandCost*100):null;
+  const grandValue=useMultiConvert(allItems,overviewCur);const grandCost=useMultiConvert(allCostItems,overviewCur);
+  const grandGain=(grandValue!==null&&grandCost!==null)?grandValue-grandCost:null;const grandPct=(grandGain!==null&&grandCost)?(grandGain/grandCost*100):null;
   const histItem=(()=>{if(!showHist)return null;const inv=investments.find(i=>i.id===showHist.invId);return inv?.items.find(it=>it.id===showHist.itemId);})();
-
   return(
     <div>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><span style={{fontSize:18,fontWeight:700,color:T.text}}>Investments</span><Btn color="#8B5CF6" onClick={()=>setShowAddInv(true)}>+ Add</Btn></div>
       <div style={{background:"linear-gradient(135deg,#8B5CF6,#EC4899)",borderRadius:14,padding:18,marginBottom:20,color:"#fff"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-          <div>
-            <div style={{fontSize:13,opacity:0.85}}>Total Investments</div>
-            <div style={{fontSize:26,fontWeight:800,marginTop:2}}>{hideTotals?"••••••":(grandValue===null?"…":`${sym(overviewCur)}${fmtNum(grandValue)}`)}</div>
-            {grandGain!==null&&!hideTotals&&<div style={{fontSize:13,marginTop:4,opacity:0.95}}>{grandGain>=0?"▲":"▼"} {sym(overviewCur)}{fmtNum(Math.abs(grandGain))} ({grandGain>=0?"+":""}{grandPct?.toFixed(1)}%)</div>}
-          </div>
+          <div><div style={{fontSize:13,opacity:0.85}}>Total Investments</div><div style={{fontSize:26,fontWeight:800,marginTop:2}}>{hideTotals?"••••••":(grandValue===null?"…":`${sym(overviewCur)}${fmtNum(grandValue)}`)}</div>{grandGain!==null&&!hideTotals&&<div style={{fontSize:13,marginTop:4,opacity:0.95}}>{grandGain>=0?"▲":"▼"} {sym(overviewCur)}{fmtNum(Math.abs(grandGain))} ({grandGain>=0?"+":""}{grandPct?.toFixed(1)}%)</div>}</div>
           <select value={overviewCur} onChange={e=>setOverviewCur(e.target.value)} style={{background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.3)",borderRadius:8,padding:"6px 10px",color:"#fff",fontSize:14}}>{CURRENCY_LIST.map(c=><option key={c} value={c} style={{color:"#000"}}>{c}</option>)}</select>
         </div>
       </div>
       {investments.length===0&&<div style={{color:T.faint,textAlign:"center",padding:32}}>No investments yet.</div>}
-      {Object.entries(grouped).map(([bucket,invs])=>{
-        const bucketItems=invs.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})));
-        return(<BucketBlock key={bucket} bucket={bucket} invs={invs} bucketItems={bucketItems} overviewCur={overviewCur} onAddItem={setAddItemTo} onEditInv={setEditInv} onDelInv={setConfirmDelInv} onEditItem={setEditItem} onDelItem={setConfirmDelItem} onHist={setShowHist} updateValOf={updateValOf} setUpdateValOf={setUpdateValOf} newVal={newVal} setNewVal={setNewVal} recordValue={recordValue}/>);
-      })}
+      {Object.entries(grouped).map(([bucket,invs])=>{const bucketItems=invs.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})));return(<BucketBlock key={bucket} bucket={bucket} invs={invs} bucketItems={bucketItems} overviewCur={overviewCur} onAddItem={setAddItemTo} onEditInv={setEditInv} onDelInv={setConfirmDelInv} onEditItem={setEditItem} onDelItem={setConfirmDelItem} onHist={setShowHist} updateValOf={updateValOf} setUpdateValOf={setUpdateValOf} newVal={newVal} setNewVal={setNewVal} recordValue={recordValue}/>);})}
       {confirmDelInv&&<ConfirmModal message={`Delete investment "${confirmDelInv.name}"?`} detail="All its holdings and history will be removed." requireDel onConfirm={()=>delInv(confirmDelInv.id)} onClose={()=>setConfirmDelInv(null)}/>}
       {confirmDelItem&&<ConfirmModal message={`Delete holding "${confirmDelItem.name}"?`} requireDel onConfirm={()=>delItem(confirmDelItem.invId,confirmDelItem.itemId)} onClose={()=>setConfirmDelItem(null)}/>}
-      {showAddInv&&<Modal title="Add Investment" onClose={()=>setShowAddInv(false)} isDirty={!!invForm.name}><Inp label="Name" value={invForm.name} onChange={e=>setInvForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Crypto Portfolio, US Stocks"/><Sel label="Bucket" value={invForm.bucket} onChange={e=>setInvForm(f=>({...f,bucket:e.target.value}))}>{INVESTMENT_BUCKETS.map(b=><option key={b} value={b}>{b}</option>)}</Sel><Btn color="#8B5CF6" onClick={addInv} style={{width:"100%"}}>Add Investment</Btn></Modal>}
+      {showAddInv&&<Modal title="Add Investment" onClose={()=>setShowAddInv(false)} isDirty={!!invForm.name}><Inp label="Name" value={invForm.name} onChange={e=>setInvForm(f=>({...f,name:e.target.value}))} placeholder="e.g. Crypto Portfolio"/><Sel label="Bucket" value={invForm.bucket} onChange={e=>setInvForm(f=>({...f,bucket:e.target.value}))}>{INVESTMENT_BUCKETS.map(b=><option key={b} value={b}>{b}</option>)}</Sel><Btn color="#8B5CF6" onClick={addInv} style={{width:"100%"}}>Add Investment</Btn></Modal>}
       {editInv&&<Modal title="Edit Investment" onClose={()=>setEditInv(null)} isDirty={true}><Inp label="Name" value={editInv.name} onChange={e=>setEditInv(v=>({...v,name:e.target.value}))}/><Sel label="Bucket" value={editInv.bucket} onChange={e=>setEditInv(v=>({...v,bucket:e.target.value}))}>{INVESTMENT_BUCKETS.map(b=><option key={b} value={b}>{b}</option>)}</Sel><Btn color="#8B5CF6" onClick={saveInvEdit} style={{width:"100%"}}>Save</Btn></Modal>}
       {addItemTo&&<Modal title="Add Holding" onClose={()=>setAddItemTo(null)} isDirty={!!itemForm.name||!!itemForm.value}><Inp label="Name" value={itemForm.name} onChange={e=>setItemForm(f=>({...f,name:e.target.value}))} placeholder="e.g. BTC, AAPL, Rolex Sub"/><Sel label="Currency" value={itemForm.currency} onChange={e=>setItemForm(f=>({...f,currency:e.target.value}))}>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c} — {CURRENCY_SYMBOLS[c]}</option>)}</Sel><Inp label="Amount Invested (cost)" type="number" value={itemForm.cost} onChange={e=>setItemForm(f=>({...f,cost:e.target.value}))} placeholder="0.00"/><Inp label="Current Market Value" type="number" value={itemForm.value} onChange={e=>setItemForm(f=>({...f,value:e.target.value}))} placeholder="0.00"/><Inp label="Notes (optional)" value={itemForm.notes} onChange={e=>setItemForm(f=>({...f,notes:e.target.value}))}/><Btn color="#8B5CF6" onClick={addItem} style={{width:"100%"}}>Add Holding</Btn></Modal>}
       {editItem&&<Modal title="Edit Holding" onClose={()=>setEditItem(null)} isDirty={true}><Inp label="Name" value={editItem.item.name} onChange={e=>setEditItem(v=>({...v,item:{...v.item,name:e.target.value}}))}/><Sel label="Currency" value={editItem.item.currency} onChange={e=>setEditItem(v=>({...v,item:{...v.item,currency:e.target.value}}))}>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c} — {CURRENCY_SYMBOLS[c]}</option>)}</Sel><Inp label="Amount Invested (cost)" type="number" value={editItem.item.cost} onChange={e=>setEditItem(v=>({...v,item:{...v.item,cost:e.target.value}}))}/><Inp label="Current Market Value (logs to history)" type="number" value={editItem.item.value} onChange={e=>setEditItem(v=>({...v,item:{...v.item,value:e.target.value}}))}/><Inp label="Notes" value={editItem.item.notes||""} onChange={e=>setEditItem(v=>({...v,item:{...v.item,notes:e.target.value}}))}/><Btn color="#8B5CF6" onClick={saveItemEdit} style={{width:"100%"}}>Save</Btn></Modal>}
-      {showHist&&<Modal title={`${histItem?.name} · Value History`} onClose={()=>setShowHist(null)} isDirty={false}>{(!histItem?.history||histItem.history.length===0)&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No history.</div>}<div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:320,overflowY:"auto"}}>          {[...(histItem?.history||[])].reverse().map((h,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",background:T.card2,borderRadius:8,padding:"8px 12px",fontSize:13}}><span style={{color:T.subtext}}>{localDateTimeStr(new Date(h.date))}</span><span style={{color:T.text,fontWeight:600}}>{sym(histItem.currency)}{fmtNum(h.value)}</span></div>))}</div></Modal>}
+      {showHist&&<Modal title={`${histItem?.name} · Value History`} onClose={()=>setShowHist(null)} isDirty={false}>{(!histItem?.history||histItem.history.length===0)&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No history.</div>}<div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:320,overflowY:"auto"}}>{[...(histItem?.history||[])].reverse().map((h,i)=>(<div key={i} style={{display:"flex",justifyContent:"space-between",background:T.card2,borderRadius:8,padding:"8px 12px",fontSize:13}}><span style={{color:T.subtext}}>{localDateTimeStr(new Date(h.date))}</span><span style={{color:T.text,fontWeight:600}}>{sym(histItem.currency)}{fmtNum(h.value)}</span></div>))}</div></Modal>}
     </div>
   );
 }
@@ -520,7 +534,7 @@ function BucketBlock({bucket,invs,bucketItems,overviewCur,onAddItem,onEditInv,on
 // ── Analytics ──
 function PieChart({data}){
   const total=data.reduce((s,d)=>s+d.value,0);
-  if(!total)return<div style={{color:T.faint,textAlign:"center",padding:24}}>No expense data.</div>;
+  if(!total)return<div style={{color:T.faint,textAlign:"center",padding:24}}>No data.</div>;
   let angle=0;const slices=data.map((d,i)=>{const pct=d.value/total;const start=angle;angle+=pct*360;return{...d,start,end:angle,pct,color:COLORS_LIST[i%COLORS_LIST.length]};});
   const xy=(deg,r)=>[50+r*Math.cos((deg-90)*Math.PI/180),50+r*Math.sin((deg-90)*Math.PI/180)];
   const arc=(s,e,r)=>{if(e-s>=360)e=359.99;const[x1,y1]=xy(s,r);const[x2,y2]=xy(e,r);const l=e-s>180?1:0;return`M 50 50 L ${x1} ${y1} A ${r} ${r} 0 ${l} 1 ${x2} ${y2} Z`;};
@@ -533,10 +547,11 @@ function BarChart({data}){
 }
 function AnalyticsSection({banks}){
   const today=new Date();const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
-  const[from,setFrom]=useState(firstOfMonth);const[to,setTo]=useState(today.toISOString().slice(0,10));const[filterCurrency,setFilterCurrency]=useState("all");
+  const[from,setFrom]=useState(firstOfMonth);const[to,setTo]=useState(localDateStr());const[filterCurrency,setFilterCurrency]=useState("all");
   const currencies=[...new Set(banks.map(b=>b.currency))];const effectiveCurrency=filterCurrency==="all"?(currencies[0]||""):filterCurrency;
   const allTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>(filterCurrency==="all"||t.currency===filterCurrency)&&t.date>=from&&t.date<=to);
-  const income=allTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);const expense=allTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+  const income=allTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+  const expense=allTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
   const tagTotals={};allTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
   const pieData=Object.entries(tagTotals).map(([label,value])=>({label,value,currencySym:sym(effectiveCurrency)}));
   const monthTotals={};allTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
@@ -584,16 +599,28 @@ function NotesSection({notesState}){
 function QuickAdd({banks,setBanks,tags}){
   const[open,setOpen]=useState(false);const[bankId,setBankId]=useState("");const[envId,setEnvId]=useState("");
   const[tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+  const[err,setErr]=useState("");
   const bank=banks.find(b=>String(b.id)===String(bankId));
-  const submit=()=>{if(!bank||!envId||!tx.desc||!tx.amount)return;const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";const newTx={id:Date.now(),...tx,amount:amt};setBanks(bs=>bs.map(b=>b.id!==bank.id?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:new Date().toISOString().slice(0,10)});setOpen(false);};
+  const submit=()=>{
+    if(!bank){setErr("Please select a bank.");return;}
+    if(!envId){setErr("Please select an envelope.");return;}
+    if(!tx.desc){setErr("Please enter a description.");return;}
+    if(!tx.amount||parseFloat(tx.amount)<=0){setErr("Please enter a valid amount.");return;}
+    const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";
+    const newTx={id:Date.now(),...tx,amount:amt};
+    setBanks(bs=>bs.map(b=>b.id!==bank.id?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+    setErr("");setOpen(false);
+  };
   return(<>
     <Btn color="#10B981" onClick={()=>setOpen(true)} style={{width:"100%",marginBottom:20}}>⚡ Quick Add Transaction</Btn>
     {open&&<Modal title="Quick Add Transaction" onClose={()=>setOpen(false)} isDirty={!!tx.desc||!!tx.amount}>
-      <Sel label="Bank" value={bankId} onChange={e=>{setBankId(e.target.value);setEnvId("");}}><option value="">Select bank</option>{banks.map(b=><option key={b.id} value={b.id}>{b.name} ({b.currency})</option>)}</Sel>
-      {bank&&<Sel label="Envelope" value={envId} onChange={e=>setEnvId(e.target.value)}><option value="">Select envelope</option>{bank.envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</Sel>}
+      <Sel label="Bank" value={bankId} onChange={e=>{setBankId(e.target.value);setEnvId("");setErr("");}}><option value="">Select bank</option>{banks.map(b=><option key={b.id} value={b.id}>{b.name} ({b.currency})</option>)}</Sel>
+      {bank&&<Sel label="Envelope" value={envId} onChange={e=>{setEnvId(e.target.value);setErr("");}}><option value="">Select envelope</option>{bank.envelopes.map(e=><option key={e.id} value={e.id}>{e.name}</option>)}</Sel>}
       <div style={{display:"flex",gap:8,marginBottom:12}}>{["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={tx.type!==t} onClick={()=>setTx(x=>({...x,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}</div>
-      <Inp label="Description" value={tx.desc} onChange={e=>setTx(x=>({...x,desc:e.target.value}))} placeholder="e.g. Groceries"/>
-      <Inp label="Amount" type="number" value={tx.amount} onChange={e=>setTx(x=>({...x,amount:e.target.value}))} placeholder="0.00"/>
+      <FormError msg={err}/>
+      <Inp label="Description" value={tx.desc} onChange={e=>{setErr("");setTx(x=>({...x,desc:e.target.value}));}} placeholder="e.g. Groceries"/>
+      <Inp label="Amount" type="number" value={tx.amount} onChange={e=>{setErr("");setTx(x=>({...x,amount:e.target.value}));}} placeholder="0.00"/>
       <Sel label="Tag (optional)" value={tx.tag} onChange={e=>setTx(x=>({...x,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
       <Inp label="Date" type="date" value={tx.date} onChange={e=>setTx(x=>({...x,date:e.target.value}))}/>
       <Btn color="#10B981" onClick={submit} style={{width:"100%"}}>Add Transaction</Btn>
@@ -611,8 +638,8 @@ function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
 // ── Custom Total ──
 function CustomTotal({banks,investments}){
   const[selected,setSelected]=useState({});
-  const[target,setTarget]=useState(()=>localStorage.getItem("customTotalCurrency")||"USD");
-  const setTargetPersist=c=>{setTarget(c);localStorage.setItem("customTotalCurrency",c);};
+  const[target,setTarget]=useState(()=>{ try{return localStorage.getItem("customTotalCurrency")||"USD";}catch{return "USD";} });
+  const setTargetPersist=c=>{setTarget(c);try{localStorage.setItem("customTotalCurrency",c);}catch{}};
   const toggleBank=(bankId)=>{setSelected(s=>{const selecting=!s[`bank_${bankId}`];const next={...s,[`bank_${bankId}`]:selecting};if(selecting)banks.find(b=>String(b.id)===String(bankId))?.envelopes.forEach(e=>{next[`env_${bankId}_${e.id}`]=false;});return next;});};
   const toggleEnv=(bankId,envId)=>{setSelected(s=>{const selecting=!s[`env_${bankId}_${envId}`];const next={...s,[`env_${bankId}_${envId}`]:selecting};if(selecting)next[`bank_${bankId}`]=false;return next;});};
   const toggleItem=(itemId)=>setSelected(s=>({...s,[`item_${itemId}`]:!s[`item_${itemId}`]}));
@@ -651,7 +678,7 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
   const addTag=()=>{if(!newTag.trim()||tags.includes(newTag.trim()))return;setTags(t=>[...t,newTag.trim()]);setNewTag("");};
   const reqDelTag=tag=>{const u=tagUsage(tag);setConfirmDelTag({tag,count:u});};
   const delTag=tag=>{setTags(t=>t.filter(x=>x!==tag));setConfirmDelTag(null);};
-  const exportData=()=>{const blob=new Blob([JSON.stringify(getData(),null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`acountee-backup-${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(url);};
+  const exportData=()=>{const blob=new Blob([JSON.stringify(getData(),null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`acountee-backup-${localDateStr()}.json`;a.click();URL.revokeObjectURL(url);};
   const importData=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{try{const p=JSON.parse(ev.target.result);if(!confirm("Replace current data with backup?"))return;onImport(p);}catch{alert("Invalid file.");}};reader.readAsText(file);e.target.value="";};
   const uploadPic=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{const img=new Image();img.onload=()=>{const canvas=document.createElement("canvas");const size=128;canvas.width=size;canvas.height=size;const ctx=canvas.getContext("2d");const min=Math.min(img.width,img.height);ctx.drawImage(img,(img.width-min)/2,(img.height-min)/2,min,min,0,0,size,size);setProfile(p=>({...p,photo:canvas.toDataURL("image/jpeg",0.8)}));};img.src=ev.target.result;};reader.readAsDataURL(file);e.target.value="";};
   const displayName=profile.name||googleName||"";const displayPhoto=profile.photo||googlePhoto||"";
