@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.2.0";
+const VERSION = "v5.2.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -328,8 +328,9 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
             <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
               <span style={{fontSize:16}}>{e.isUnalloc?"📂":(e.emoji||"🗂️")}</span>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                  {e.name}{e.goal?<span style={{fontSize:11,color:T.faint,marginLeft:6}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}
+                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",display:"flex",alignItems:"center",gap:6}}>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name}{e.goal?<span style={{fontSize:11,color:T.faint,marginLeft:6}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}</span>
+                  {!e.isUnalloc&&<button onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||""})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✏️</button>}
                 </div>
                 {e.goal&&!e.isUnalloc&&(()=>{const pct=Math.min(100,Math.round((e.balance/e.goal)*100));const rem=e.goal-e.balance;return(<div style={{marginTop:4}}><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct>=100?"#10B981":color,borderRadius:99}}/></div><div style={{fontSize:10,color:pct>=100?"#10B981":T.faint,marginTop:2}}>{pct}%{pct>=100?" ✓":<span style={{marginLeft:4,color:T.subtext}}>· {sym(currency)}{fmtNum(rem)} left</span>}</div></div>);})()}
                 {!e.goal&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
@@ -342,7 +343,6 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
               </div>
               <Btn small color={color} onClick={()=>setShowTx(e.id)}>+</Btn>
               <Btn small outline color={color} onClick={()=>setShowHist(e.id)}>📄</Btn>
-              {!e.isUnalloc&&<Btn small outline color={T.subtext} onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||""})}>✏️</Btn>}
               {!e.isUnalloc&&<Btn small outline color="#ef4444" onClick={()=>setConfirmDelEnv({id:e.id,name:e.name})}>🗑</Btn>}
             </div>
           </div>
@@ -568,12 +568,14 @@ function BucketBlock({bucket,invs,bucketItems,overviewCur,onAddItem,onEditInv,on
             <div key={inv.id} style={{background:T.card,borderRadius:12,border:`1px solid ${T.border}`,padding:14}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
                 <div>
-                  <div style={{fontWeight:600,color:T.text,fontSize:15}}>{inv.name}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6}}>
+                    <div style={{fontWeight:600,color:T.text,fontSize:15}}>{inv.name}</div>
+                    <button onClick={()=>onEditInv({id:inv.id,name:inv.name,bucket:inv.bucket})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:13,padding:0}}>✏️</button>
+                  </div>
                   <div style={{fontSize:12,color:T.subtext,marginTop:2}}>Value {fmtNum(tot.value)} · Cost {fmtNum(tot.cost)} · <span style={{color:up?"#10B981":"#ef4444",fontWeight:600}}>{up?"+":""}{tot.pct.toFixed(1)}%</span></div>
                 </div>
                 <div style={{display:"flex",gap:4}}>
                   <Btn small color="#8B5CF6" onClick={()=>onAddItem(inv.id)}>+ Holding</Btn>
-                  <Btn small outline color={T.subtext} onClick={()=>onEditInv({id:inv.id,name:inv.name,bucket:inv.bucket})}>✏️</Btn>
                   <Btn small outline color="#ef4444" onClick={()=>onDelInv({id:inv.id,name:inv.name})}>🗑</Btn>
                 </div>
               </div>
@@ -584,7 +586,10 @@ function BucketBlock({bucket,invs,bucketItems,overviewCur,onAddItem,onEditInv,on
                     <div key={it.id} style={{background:T.card2,borderRadius:8,padding:"10px 12px"}}>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
                         <div style={{flex:1}}>
-                          <div style={{fontSize:13,fontWeight:600,color:T.text}}>{it.name} <span style={{fontSize:11,color:T.faint}}>· {it.currency}</span></div>
+                          <div style={{fontSize:13,fontWeight:600,color:T.text,display:"flex",alignItems:"center",gap:6}}>
+                            <span>{it.name} <span style={{fontSize:11,color:T.faint}}>· {it.currency}</span></span>
+                            <button onClick={()=>onEditItem({invId:inv.id,item:{...it}})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0}}>✏️</button>
+                          </div>
                           {it.notes&&<div style={{fontSize:11,color:T.subtext}}>{it.notes}</div>}
                           <div style={{display:"flex",gap:10,marginTop:4,fontSize:11,flexWrap:"wrap"}}>
                             <span style={{color:T.subtext}}>Cost {sym(it.currency)}{fmtNum(it.cost)}</span>
@@ -597,7 +602,6 @@ function BucketBlock({bucket,invs,bucketItems,overviewCur,onAddItem,onEditInv,on
                           <Btn small color="#8B5CF6" onClick={()=>{setUpdateValOf({invId:inv.id,itemId:it.id});setNewVal(String(it.value));}}>Update</Btn>
                           <div style={{display:"flex",gap:3}}>
                             <Btn small outline color={T.subtext} onClick={()=>onHist({invId:inv.id,itemId:it.id})}>📄</Btn>
-                            <Btn small outline color={T.subtext} onClick={()=>onEditItem({invId:inv.id,item:{...it}})}>✏️</Btn>
                             <Btn small outline color="#ef4444" onClick={()=>onDelItem({invId:inv.id,itemId:it.id,name:it.name})}>🗑</Btn>
                           </div>
                         </div>
