@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.1.3";
+const VERSION = "v5.1.4";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -115,7 +115,17 @@ function SyncBar({status,isOnline}){
 }
 function EmojiPicker({value,onPick}){return(<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{ENVELOPE_EMOJIS.map(em=>(<button key={em} onClick={()=>onPick(em)} style={{fontSize:18,padding:"4px 6px",borderRadius:8,cursor:"pointer",background:value===em?"#3B82F6":T.input,border:`1px solid ${value===em?"#3B82F6":T.border}`}}>{em}</button>))}</div>);}
 
-function makeBank(name,currency,balance,color){return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};}
+function VersionBar(){
+  const[now,setNow]=useState(new Date());
+  useEffect(()=>{const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t);},[]);
+  return(
+    <div style={{fontSize:11,color:T.faint,marginTop:2,display:"flex",gap:8,alignItems:"center"}}>
+      <span>{VERSION}</span>
+      <span style={{color:T.border}}>·</span>
+      <span>{now.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})} {now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</span>
+    </div>
+  );
+}return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};}
 function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
 
 // ── Add Transaction Modal ──
@@ -321,16 +331,16 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
             <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
               <span style={{fontSize:16}}>{e.isUnalloc?"📂":(e.emoji||"🗂️")}</span>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal"}}>
+                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
                   {e.name}{e.goal?<span style={{fontSize:11,color:T.faint,marginLeft:6}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}
                 </div>
                 {e.goal&&!e.isUnalloc&&(()=>{const pct=Math.min(100,Math.round((e.balance/e.goal)*100));const rem=e.goal-e.balance;return(<div style={{marginTop:4}}><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct>=100?"#10B981":color,borderRadius:99}}/></div><div style={{fontSize:10,color:pct>=100?"#10B981":T.faint,marginTop:2}}>{pct}%{pct>=100?" ✓":<span style={{marginLeft:4,color:T.subtext}}>· {sym(currency)}{fmtNum(rem)} left</span>}</div></div>);})()}
                 {!e.goal&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
               </div>
             </div>
-            <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0}}>
-              <div style={{textAlign:"right"}}>
-                <div style={{color:e.balance<0?"#ef4444":e.isUnalloc?T.faint:color,fontWeight:600,fontSize:13}}>{sym(currency)}{fmtNum(e.balance)}</div>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0,maxWidth:"55%"}}>
+              <div style={{textAlign:"right",minWidth:0}}>
+                <div style={{color:e.balance<0?"#ef4444":e.isUnalloc?T.faint:color,fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sym(currency)}{fmtNum(e.balance)}</div>
                 {convCurrency&&<ConversionBadge amount={e.balance} fromCurrency={currency} toCurrency={convCurrency} style={{marginLeft:0}}/>}
               </div>
               <Btn small color={color} onClick={()=>setShowTx(e.id)}>+</Btn>
@@ -1060,6 +1070,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         if(data.appName)setAppName(data.appName);
         if(data.profile)setProfile(data.profile);
         if(data.overviewCur)setOverviewCur(data.overviewCur);
+        if(data.hideTotals!==undefined)setHideTotals(data.hideTotals);
       }
       setSyncStatus("saved");
       initialLoadDone.current=true;
@@ -1094,7 +1105,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
     if(p.appName)setAppName(p.appName);
     if(p.profile)setProfile(p.profile);
   };
-  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur});
+  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
   const TAB_COLORS=["#3B82F6","#3B82F6","#8B5CF6","#06B6D4","#10B981","#64748B"];
 
   return(
@@ -1103,7 +1114,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
             <div style={{fontSize:22,fontWeight:700}}>💰 {appName}</div>
-            <div style={{fontSize:11,color:T.faint,marginTop:2}}>{VERSION}</div>
+            <VersionBar/>
           </div>
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             <SyncBar status={syncStatus} isOnline={isOnline}/>
