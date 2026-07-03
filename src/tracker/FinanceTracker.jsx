@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.2.1";
+const VERSION = "v5.2.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -944,7 +944,7 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
         <button onClick={()=>setHideTotals(h=>!h)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:13,color:T.subtext,display:"flex",alignItems:"center",gap:6}}>
-          {hideTotals?"🙈 Show totals":"👁️ Hide totals"}
+          {hideTotals?"🙉 Show totals":"🙈 Hide totals"}
         </button>
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
