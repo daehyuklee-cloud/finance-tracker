@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.1.4";
+const VERSION = "v5.1.5";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -25,7 +25,6 @@ const THEMES = {
 };
 let T = THEMES.light;
 
-// ── Exchange Rate ──
 const rateCache={};
 async function fetchRate(from,to){
   if(from===to)return 1;
@@ -71,7 +70,6 @@ function useUndoable(init){
   return[val,set,undo,redo,idx>0,idx<history.length-1];
 }
 
-// ── UI Primitives ──
 function Modal({title,onClose,children,isDirty=false,zIndex=100}){
   const requestClose=()=>{if(isDirty){if(window.confirm("You have unsaved changes. Close anyway?"))onClose();}else onClose();};
   return(
@@ -125,10 +123,13 @@ function VersionBar(){
       <span>{now.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})} {now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</span>
     </div>
   );
-}return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};}
+}
+
+function makeBank(name,currency,balance,color){
+  return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};
+}
 function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
 
-// ── Add Transaction Modal ──
 function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
   const[err,setErr]=useState("");
   const submit=()=>{
@@ -152,7 +153,6 @@ function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
   );
 }
 
-// ── Edit Transaction Modal ──
 function TxEditModal({tx,tags,onSave,onClose}){
   const[form,setForm]=useState({...tx});
   const[err,setErr]=useState("");
@@ -176,7 +176,6 @@ function TxEditModal({tx,tags,onSave,onClose}){
   );
 }
 
-// ── Transfer Modal ──
 function TransferModal({bank,allBanks,onClose,onTransfer}){
   const color=bankColor(bank);
   const[fromEnvId,setFromEnvId]=useState(bank.envelopes[0]?.id||"");
@@ -246,8 +245,6 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
     </Modal>
   );
 }
-
-// ── Envelope View ──
 function EnvelopeView({bank,bankId,setBanks,tags}){
   const color=bankColor(bank);
   const currency=bank.currency;
@@ -406,7 +403,6 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   );
 }
 
-// ── Banks Section ──
 function BanksSection({banks,setBanks,tags}){
   const[showBank,setShowBank]=useState(false);
   const[expandedSet,setExpandedSet]=useState({});
@@ -518,8 +514,6 @@ function BanksSection({banks,setBanks,tags}){
     </div>
   );
 }
-
-// ── Investments ──
 function subGain(s){const g=s.value-(s.cost||0);const pct=s.cost?(g/s.cost*100):0;return{g,pct};}
 function subATHATL(s){const vals=(s.history||[]).map(h=>h.value);if(!vals.length)return{ath:s.value,atl:s.value};return{ath:Math.max(...vals),atl:Math.min(...vals)};}
 function invTotals(inv){const items=inv.items||[];const value=items.reduce((s,i)=>s+(i.value||0),0);const cost=items.reduce((s,i)=>s+(i.cost||0),0);const g=value-cost;const pct=cost?(g/cost*100):0;return{value,cost,g,pct};}
@@ -682,7 +676,6 @@ function InvestmentsSection({investments,setInvestments,hideTotals}){
   );
 }
 
-// ── Analytics ──
 function PieChart({data}){
   const total=data.reduce((s,d)=>s+d.value,0);
   if(!total)return<div style={{color:T.faint,textAlign:"center",padding:24}}>No data.</div>;
@@ -756,8 +749,6 @@ function AnalyticsSection({banks}){
     </div>
   );
 }
-
-// ── Notes ──
 function NotesSection({notesState}){
   const[notes,setNotes,undo,redo,canUndo,canRedo]=notesState;
   const[confirmDel,setConfirmDel]=useState(null);
@@ -786,7 +777,6 @@ function NotesSection({notesState}){
   );
 }
 
-// ── Quick Add ──
 function QuickAdd({banks,setBanks,tags}){
   const[open,setOpen]=useState(false);
   const[bankId,setBankId]=useState("");
@@ -831,7 +821,6 @@ function QuickAdd({banks,setBanks,tags}){
   );
 }
 
-// ── Universal Total ──
 function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
   const items=[...banks.map(b=>({amount:bankTotal(b),currency:b.currency})),...investments.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})))];
   const total=useMultiConvert(items,target);
@@ -850,7 +839,6 @@ function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
   );
 }
 
-// ── Custom Total ──
 function CustomTotal({banks,investments}){
   const[selected,setSelected]=useState({});
   const[target,setTarget]=useState(()=>{try{return localStorage.getItem("customTotalCurrency")||"USD";}catch{return "USD";}});
@@ -907,7 +895,6 @@ function CustomTotal({banks,investments}){
   );
 }
 
-// ── Dashboard ──
 function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
   const byCurrency=banks.reduce((acc,b)=>{acc[b.currency]=(acc[b.currency]||0)+bankTotal(b);return acc;},{});
   const invByCurrency={};investments.forEach(inv=>(inv.items||[]).forEach(it=>{invByCurrency[it.currency]=(invByCurrency[it.currency]||0)+it.value;}));
@@ -960,7 +947,6 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
   );
 }
 
-// ── Settings ──
 function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,getData,onImport,onSignOut}){
   const[newTag,setNewTag]=useState("");
   const[confirmDelTag,setConfirmDelTag]=useState(null);
@@ -1031,8 +1017,6 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
     </div>
   );
 }
-
-// ── Root ──
 export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSignOut}){
   const[tab,setTab]=useState(0);
   const[theme,setTheme]=useState("light");
@@ -1080,15 +1064,15 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
-    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur});
+    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
     setSyncStatus("saving");
     if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
     saveTimerRef.current=setTimeout(async()=>{
-      await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur});
+      await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
       setSyncStatus(isOnline?"saved":"offline");
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
-  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,userId,isOnline]);
+  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,userId,isOnline]);
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
@@ -1104,6 +1088,8 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
     if(p.theme)setTheme(p.theme);
     if(p.appName)setAppName(p.appName);
     if(p.profile)setProfile(p.profile);
+    if(p.overviewCur)setOverviewCur(p.overviewCur);
+    if(p.hideTotals!==undefined)setHideTotals(p.hideTotals);
   };
   const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
   const TAB_COLORS=["#3B82F6","#3B82F6","#8B5CF6","#06B6D4","#10B981","#64748B"];
