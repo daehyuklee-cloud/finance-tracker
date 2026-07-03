@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.1.5";
+const VERSION = "v5.2.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -409,6 +409,10 @@ function BanksSection({banks,setBanks,tags}){
   const[editBank,setEditBank]=useState(null);
   const[confirmDel,setConfirmDel]=useState(null);
   const[transferBank,setTransferBank]=useState(null);
+  const[quickTxBank,setQuickTxBank]=useState(null);
+  const[quickTxEnvId,setQuickTxEnvId]=useState("");
+  const[quickTx,setQuickTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+  const[quickTxErr,setQuickTxErr]=useState("");
   const[bankName,setBankName]=useState("");
   const[bankCurrency,setBankCurrency]=useState("PHP");
   const[bankBal,setBankBal]=useState("");
@@ -442,6 +446,18 @@ function BanksSection({banks,setBanks,tags}){
     }));
     setTransferBank(null);
   };
+  const submitQuickTx=()=>{
+    if(!quickTxEnvId){setQuickTxErr("Please select an envelope.");return;}
+    if(!quickTx.desc){setQuickTxErr("Please enter a description.");return;}
+    if(!quickTx.amount||parseFloat(quickTx.amount)<=0){setQuickTxErr("Please enter a valid amount greater than 0.");return;}
+    const amt=parseFloat(quickTx.amount);
+    const isIncome=quickTx.type==="income";
+    const newTx={id:Date.now(),...quickTx,amount:amt};
+    const bankId=quickTxBank.id;
+    setBanks(bs=>bs.map(b=>b.id!==bankId?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==quickTxEnvId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+    setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
+  };
 
   return(
     <div>
@@ -474,13 +490,16 @@ function BanksSection({banks,setBanks,tags}){
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:4,height:36,borderRadius:2,background:color}}/>
                         <div>
-                          <div style={{fontWeight:600,fontSize:15,color:T.text}}>{bk.name}</div>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{fontWeight:600,fontSize:15,color:T.text}}>{bk.name}</div>
+                            <button onClick={()=>setEditBank({id:bk.id,name:bk.name,balance:bankTotal(bk),color:bankColor(bk)})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:13,padding:0}}>✏️</button>
+                          </div>
                           <div style={{fontSize:20,fontWeight:700,color,marginTop:2}}>{sym(bk.currency)}{fmtNum(bankTotal(bk))}{globalConv&&<ConversionBadge amount={bankTotal(bk)} fromCurrency={bk.currency} toCurrency={globalConv}/>}</div>
                           <div style={{fontSize:11,color:T.faint,marginTop:2}}>{(bk.envelopes||[]).length} envelopes</div>
                         </div>
                       </div>
                       <div style={{display:"flex",gap:6,alignItems:"center"}}>
-                        <Btn small outline color={T.subtext} onClick={()=>setEditBank({id:bk.id,name:bk.name,balance:bankTotal(bk),color:bankColor(bk)})}>✏️</Btn>
+                        <Btn small outline color={color} onClick={()=>{setQuickTxBank(bk);setQuickTxEnvId(bk.envelopes[0]?.id||"");}}>+</Btn>
                         <Btn small outline color={color} onClick={()=>setTransferBank(bk)}>⇄</Btn>
                         <Btn small outline color={color} onClick={()=>toggle(bk.id)}>{expandedSet[bk.id]?"▲":"▼"}</Btn>
                         <Btn small outline color="#ef4444" onClick={()=>setConfirmDel({id:bk.id,name:bk.name})}>🗑</Btn>
@@ -495,6 +514,22 @@ function BanksSection({banks,setBanks,tags}){
         );
       })}
       {transferBank&&<TransferModal bank={transferBank} allBanks={banks} onClose={()=>setTransferBank(null)} onTransfer={doTransfer}/>}
+      {quickTxBank&&<Modal title={`Add Transaction → ${quickTxBank.name}`} onClose={()=>{setQuickTxBank(null);setQuickTxErr("");}} isDirty={!!quickTx.desc||!!quickTx.amount}>
+        <Sel label="Envelope" value={quickTxEnvId} onChange={e=>{setQuickTxEnvId(e.target.value);setQuickTxErr("");}}>
+          {quickTxBank.envelopes.map(e=><option key={e.id} value={e.id}>{e.isUnalloc?"📂":(e.emoji||"🗂️")} {e.name}</option>)}
+        </Sel>
+        <div style={{display:"flex",gap:8,marginBottom:12}}>
+          {["income","expense"].map(t=><Btn key={t} color={t==="income"?"#10B981":"#ef4444"} outline={quickTx.type!==t} onClick={()=>setQuickTx(x=>({...x,type:t}))} style={{flex:1,textTransform:"capitalize"}}>{t}</Btn>)}
+        </div>
+        <FormError msg={quickTxErr}/>
+        <Inp label="Description" value={quickTx.desc} onChange={e=>{setQuickTxErr("");setQuickTx(x=>({...x,desc:e.target.value}));}} placeholder="e.g. Groceries"/>
+        <Inp label="Amount" type="number" value={quickTx.amount} onChange={e=>{setQuickTxErr("");setQuickTx(x=>({...x,amount:e.target.value}));}} placeholder="0.00"/>
+        <Sel label="Tag (optional)" value={quickTx.tag} onChange={e=>setQuickTx(x=>({...x,tag:e.target.value}))}>
+          <option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}
+        </Sel>
+        <Inp label="Date" type="date" value={quickTx.date} onChange={e=>setQuickTx(x=>({...x,date:e.target.value}))}/>
+        <Btn color={bankColor(quickTxBank)} onClick={submitQuickTx} style={{width:"100%"}}>Add Transaction</Btn>
+      </Modal>}
       {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail="All its envelopes and transactions will be removed." requireDel onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
       {showBank&&<Modal title="Add Bank" onClose={()=>setShowBank(false)} isDirty={!!bankName||!!bankBal}>
         <Inp label="Bank Name" value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="e.g. BDO, DBS, Chase"/>
@@ -744,7 +779,8 @@ function AnalyticsSection({banks}){
         <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #ef444433"}}><div style={{fontSize:12,color:T.subtext}}>Expense</div><div style={{fontSize:22,fontWeight:700,color:"#ef4444"}}>{sym(effectiveCurrency)}{fmtNum(expense)}</div></div>
       </div>
       <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}><span style={{fontSize:12,color:T.subtext}}>Net: </span><span style={{fontSize:16,fontWeight:700,color:income-expense>=0?"#10B981":"#ef4444"}}>{sym(effectiveCurrency)}{fmtNum(income-expense)}</span></div>
-      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>💸 Spending by Tag</div><PieChart data={pieData}/></div>
+      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Income vs Expense</div><PieChart data={[{label:"Income",value:income,currencySym:sym(effectiveCurrency)},{label:"Expense",value:expense,currencySym:sym(effectiveCurrency)}]}/></div>
+      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Spending by Tag</div><PieChart data={pieData}/></div>
       <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending</div><BarChart data={barData}/></div>
     </div>
   );
