@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.2.2";
+const VERSION = "v5.3.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -48,6 +48,20 @@ function useMultiConvert(items,target){
   // eslint-disable-next-line
   },[JSON.stringify(items),target]);
   return total;
+}
+function useConvertedItems(items,target){
+  const[converted,setConverted]=useState(null);
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      const out=[];let ok=true;
+      for(const it of items){const r=await fetchRate(it.currency,target);if(r===null){ok=false;break;}out.push({...it,amount:it.amount*r});}
+      if(active)setConverted(ok?out:null);
+    })();
+    return()=>{active=false;};
+  // eslint-disable-next-line
+  },[JSON.stringify(items),target]);
+  return converted;
 }
 function ConversionBadge({amount,fromCurrency,toCurrency,style}){
   const[rate,setRate]=useState(null);
@@ -114,13 +128,12 @@ function SyncBar({status,isOnline}){
 function EmojiPicker({value,onPick}){return(<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{ENVELOPE_EMOJIS.map(em=>(<button key={em} onClick={()=>onPick(em)} style={{fontSize:18,padding:"4px 6px",borderRadius:8,cursor:"pointer",background:value===em?"#3B82F6":T.input,border:`1px solid ${value===em?"#3B82F6":T.border}`}}>{em}</button>))}</div>);}
 
 function VersionBar(){
-  const[now,setNow]=useState(new Date());
-  useEffect(()=>{const t=setInterval(()=>setNow(new Date()),60000);return()=>clearInterval(t);},[]);
+  const now=new Date();
   return(
     <div style={{fontSize:11,color:T.faint,marginTop:2,display:"flex",gap:8,alignItems:"center"}}>
       <span>{VERSION}</span>
       <span style={{color:T.border}}>·</span>
-      <span>{now.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})} {now.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"})}</span>
+      <span>{now.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}</span>
     </div>
   );
 }
@@ -759,33 +772,71 @@ function AnalyticsSection({banks}){
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
   const[to,setTo]=useState(localDateStr());
-  const[filterCurrency,setFilterCurrency]=useState("all");
   const currencies=[...new Set(banks.map(b=>b.currency))];
-  const effectiveCurrency=filterCurrency==="all"?(currencies[0]||""):filterCurrency;
-  const allTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>(filterCurrency==="all"||t.currency===filterCurrency)&&t.date>=from&&t.date<=to);
-  const income=allTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
-  const expense=allTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const tagTotals={};allTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
-  const pieData=Object.entries(tagTotals).map(([label,value])=>({label,value,currencySym:sym(effectiveCurrency)}));
-  const monthTotals={};allTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
-  const barData=Object.entries(monthTotals).sort(([a],[b])=>a.localeCompare(b)).slice(-6).map(([label,value])=>({label:label.slice(5),value,currencySym:sym(effectiveCurrency)}));
+  const[selectedCurrencies,setSelectedCurrencies]=useState(()=>{
+    try{
+      const saved=JSON.parse(localStorage.getItem("analyticsCurrencies")||"null");
+      if(Array.isArray(saved)&&saved.length)return saved;
+    }catch{}
+    return currencies;
+  });
+  const[targetCur,setTargetCur]=useState(()=>{try{return localStorage.getItem("analyticsTargetCurrency")||"USD";}catch{return "USD";}});
+  const effectiveSelected=selectedCurrencies.filter(c=>currencies.includes(c));
+  const activeCurrencies=effectiveSelected.length?effectiveSelected:currencies;
+  const toggleCurrency=c=>{
+    setSelectedCurrencies(prev=>{
+      const base=prev.filter(x=>currencies.includes(x));
+      const next=base.includes(c)?base.filter(x=>x!==c):[...base,c];
+      try{localStorage.setItem("analyticsCurrencies",JSON.stringify(next));}catch{}
+      return next;
+    });
+  };
+  const setTargetPersist=c=>{setTargetCur(c);try{localStorage.setItem("analyticsTargetCurrency",c);}catch{}};
+  const allTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>activeCurrencies.includes(t.currency)&&t.date>=from&&t.date<=to);
+  const converted=useConvertedItems(allTx,targetCur);
+  const loading=converted===null;
+  const txForCalc=converted||[];
+  const income=txForCalc.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+  const expense=txForCalc.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+  const tagTotals={};txForCalc.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
+  const pieData=Object.entries(tagTotals).map(([label,value])=>({label,value,currencySym:sym(targetCur)}));
+  const monthTotals={};txForCalc.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
+  const barData=Object.entries(monthTotals).sort(([a],[b])=>a.localeCompare(b)).slice(-6).map(([label,value])=>({label:label.slice(5),value,currencySym:sym(targetCur)}));
   return(
     <div>
-      <div style={{display:"flex",gap:8,marginBottom:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"flex-end"}}>
         <div><div style={{fontSize:11,color:T.subtext,marginBottom:4}}>From</div><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}/></div>
         <div><div style={{fontSize:11,color:T.subtext,marginBottom:4}}>To</div><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}/></div>
-        <select value={filterCurrency} onChange={e=>setFilterCurrency(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}>
-          <option value="all">First currency</option>{currencies.map(c=><option key={c} value={c}>{c}</option>)}
-        </select>
+        <div>
+          <div style={{fontSize:11,color:T.subtext,marginBottom:4}}>Show in</div>
+          <select value={targetCur} onChange={e=>setTargetPersist(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}>
+            {[...new Set([targetCur,...CURRENCY_LIST])].map(c=><option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
       </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-        <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #10B98133"}}><div style={{fontSize:12,color:T.subtext}}>Income</div><div style={{fontSize:22,fontWeight:700,color:"#10B981"}}>{sym(effectiveCurrency)}{fmtNum(income)}</div></div>
-        <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #ef444433"}}><div style={{fontSize:12,color:T.subtext}}>Expense</div><div style={{fontSize:22,fontWeight:700,color:"#ef4444"}}>{sym(effectiveCurrency)}{fmtNum(expense)}</div></div>
+      <div style={{marginBottom:16}}>
+        <div style={{fontSize:11,color:T.subtext,marginBottom:6}}>Currencies included</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+          {currencies.length===0&&<span style={{fontSize:12,color:T.faint}}>No banks yet.</span>}
+          {currencies.map(c=>{
+            const on=activeCurrencies.includes(c);
+            return(
+              <button key={c} onClick={()=>toggleCurrency(c)} style={{background:on?getCurrencyColor(c):T.card,color:on?"#fff":T.subtext,border:`1px solid ${on?getCurrencyColor(c):T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:500}}>{c}</button>
+            );
+          })}
+        </div>
       </div>
-      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}><span style={{fontSize:12,color:T.subtext}}>Net: </span><span style={{fontSize:16,fontWeight:700,color:income-expense>=0?"#10B981":"#ef4444"}}>{sym(effectiveCurrency)}{fmtNum(income-expense)}</span></div>
-      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Income vs Expense</div><PieChart data={[{label:"Income",value:income,currencySym:sym(effectiveCurrency)},{label:"Expense",value:expense,currencySym:sym(effectiveCurrency)}]}/></div>
-      <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Spending by Tag</div><PieChart data={pieData}/></div>
-      <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending</div><BarChart data={barData}/></div>
+      {loading&&currencies.length>0&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
+      {!loading&&<>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+          <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #10B98133"}}><div style={{fontSize:12,color:T.subtext}}>Income</div><div style={{fontSize:22,fontWeight:700,color:"#10B981"}}>{sym(targetCur)}{fmtNum(income)}</div></div>
+          <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #ef444433"}}><div style={{fontSize:12,color:T.subtext}}>Expense</div><div style={{fontSize:22,fontWeight:700,color:"#ef4444"}}>{sym(targetCur)}{fmtNum(expense)}</div></div>
+        </div>
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}><span style={{fontSize:12,color:T.subtext}}>Net: </span><span style={{fontSize:16,fontWeight:700,color:income-expense>=0?"#10B981":"#ef4444"}}>{sym(targetCur)}{fmtNum(income-expense)}</span></div>
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Income vs Expense</div><PieChart data={[{label:"Income",value:income,currencySym:sym(targetCur)},{label:"Expense",value:expense,currencySym:sym(targetCur)}]}/></div>
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Spending by Tag</div><PieChart data={pieData}/></div>
+        <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending</div><BarChart data={barData}/></div>
+      </>}
     </div>
   );
 }
@@ -943,8 +994,8 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
   return(
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
-        <button onClick={()=>setHideTotals(h=>!h)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:13,color:T.subtext,display:"flex",alignItems:"center",gap:6}}>
-          {hideTotals?"🙉 Show totals":"🙈 Hide totals"}
+        <button onClick={()=>setHideTotals(h=>!h)} title={hideTotals?"Show totals":"Hide totals"} aria-label={hideTotals?"Show totals":"Hide totals"} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 10px",cursor:"pointer",fontSize:13,color:T.subtext,display:"flex",alignItems:"center",gap:6}}>
+          {hideTotals?"🙈":"🙉"}
         </button>
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
