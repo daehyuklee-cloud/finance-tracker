@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.3.1";
+const VERSION = "v5.4.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -431,6 +431,13 @@ function BanksSection({banks,setBanks,tags}){
   const[bankBal,setBankBal]=useState("");
   const[bankColorPick,setBankColorPick]=useState(BANK_COLOR_CHOICES[0]);
   const[globalConv,setGlobalConv]=useState("");
+  const[showBankHist,setShowBankHist]=useState(null);
+  const[showAllHist,setShowAllHist]=useState(false);
+  const[bankHistVisible,setBankHistVisible]=useState(50);
+  const[allHistVisible,setAllHistVisible]=useState(50);
+  const HIST_PAGE_SIZE=50;
+  const[editHistTx,setEditHistTx]=useState(null);
+  const[confirmDelHistTx,setConfirmDelHistTx]=useState(null);
   const grouped=banks.reduce((acc,b)=>{(acc[b.currency]=acc[b.currency]||[]).push(b);return acc;},{});
   const toggle=id=>setExpandedSet(s=>({...s,[id]:!s[id]}));
   const addBank=()=>{if(!bankName.trim())return;setBanks(b=>[...b,makeBank(bankName.trim(),bankCurrency,parseFloat(bankBal)||0,bankColorPick)]);setBankName("");setBankBal("");setShowBank(false);};
@@ -471,6 +478,33 @@ function BanksSection({banks,setBanks,tags}){
     setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
   };
+  const historyTxsForBank=bank=>bank.envelopes.flatMap(e=>e.transactions.map(t=>({...t,bankId:bank.id,bankName:bank.name,bankCurrency:bank.currency,envId:e.id,envName:e.name,envEmoji:e.isUnalloc?"📂":(e.emoji||"🗂️")}))).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
+  const historyTxsAll=()=>banks.flatMap(b=>historyTxsForBank(b)).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
+  const saveHistTxEdit=updated=>{
+    const{bankId,envId}=editHistTx;
+    setBanks(bs=>bs.map(b=>{
+      if(b.id!==bankId)return b;
+      const env=b.envelopes.find(e=>e.id===envId);
+      const old=env.transactions.find(t=>t.id===updated.id);
+      const oldD=old.type==="income"?old.amount:-old.amount;
+      const newD=updated.type==="income"?updated.amount:-updated.amount;
+      const diff=newD-oldD;
+      return{...b,balance:b.balance+diff,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+diff,transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};
+    }));
+    setEditHistTx(null);
+  };
+  const delHistTx=()=>{
+    const{bankId,envId,txId}=confirmDelHistTx;
+    setBanks(bs=>bs.map(b=>{
+      if(b.id!==bankId)return b;
+      const env=b.envelopes.find(e=>e.id===envId);
+      const t=env?.transactions.find(x=>x.id===txId);
+      if(!t)return b;
+      const delta=t.type==="income"?-t.amount:t.amount;
+      return{...b,balance:b.balance+delta,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+delta,transactions:e.transactions.filter(x=>x.id!==txId)})};
+    }));
+    setConfirmDelHistTx(null);
+  };
 
   return(
     <div>
@@ -481,7 +515,10 @@ function BanksSection({banks,setBanks,tags}){
             <option value="">Convert →</option>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-        <Btn color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn>
+        <div style={{display:"flex",gap:8}}>
+          <Btn small outline color={T.subtext} onClick={()=>{setShowAllHist(true);setAllHistVisible(HIST_PAGE_SIZE);}}>📄 All Transactions</Btn>
+          <Btn color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn>
+        </div>
       </div>
       {banks.length===0&&<div style={{color:T.faint,textAlign:"center",padding:32}}>No banks yet.</div>}
       {Object.entries(grouped).map(([currency,cBanks])=>{
@@ -513,6 +550,7 @@ function BanksSection({banks,setBanks,tags}){
                       </div>
                       <div style={{display:"flex",gap:6,alignItems:"center"}}>
                         <Btn small outline color={color} onClick={()=>{setQuickTxBank(bk);setQuickTxEnvId(bk.envelopes[0]?.id||"");}}>+</Btn>
+                        <Btn small outline color={color} onClick={()=>{setShowBankHist(bk.id);setBankHistVisible(HIST_PAGE_SIZE);}}>📄</Btn>
                         <Btn small outline color={color} onClick={()=>setTransferBank(bk)}>⇄</Btn>
                         <Btn small outline color={color} onClick={()=>toggle(bk.id)}>{expandedSet[bk.id]?"▲":"▼"}</Btn>
                         <Btn small outline color="#ef4444" onClick={()=>setConfirmDel({id:bk.id,name:bk.name})}>🗑</Btn>
@@ -543,6 +581,68 @@ function BanksSection({banks,setBanks,tags}){
         <Inp label="Date" type="date" value={quickTx.date} onChange={e=>setQuickTx(x=>({...x,date:e.target.value}))}/>
         <Btn color={bankColor(quickTxBank)} onClick={submitQuickTx} style={{width:"100%"}}>Add Transaction</Btn>
       </Modal>}
+      {showBankHist&&(()=>{
+        const bank=banks.find(b=>b.id===showBankHist);
+        if(!bank)return null;
+        const txs=historyTxsForBank(bank);
+        const visibleTxs=txs.slice(0,bankHistVisible);
+        const remaining=txs.length-visibleTxs.length;
+        return(
+          <Modal title={`${bank.name} · All History`} onClose={()=>setShowBankHist(null)} isDirty={false}>
+            {txs.length===0&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No transactions yet.</div>}
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
+              {visibleTxs.map(t=>(
+                <div key={t.id} style={{background:T.card2,borderRadius:8,padding:"8px 12px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:13,color:T.text}}>{t.desc}</div>
+                      <div style={{fontSize:11,color:T.faint}}>{t.envEmoji} {t.envName} · {t.date}{t.tag?<span style={{marginLeft:6,background:T.card,borderRadius:4,padding:"1px 6px"}}>{t.tag}</span>:null}</div>
+                      {t.note&&<div style={{fontSize:11,color:T.faint,marginTop:2,fontStyle:"italic"}}>{t.note}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{color:t.type==="income"?"#10B981":"#ef4444",fontWeight:600}}>{t.type==="income"?"+":"-"}{sym(t.bankCurrency)}{fmtNum(t.amount)}</span>
+                      <button onClick={()=>setEditHistTx({bankId:t.bankId,envId:t.envId,tx:t})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:13}}>✏️</button>
+                      <button onClick={()=>setConfirmDelHistTx({bankId:t.bankId,envId:t.envId,txId:t.id,desc:t.desc})} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer"}}>✕</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {remaining>0&&<Btn small outline color={bankColor(bank)} onClick={()=>setBankHistVisible(v=>v+HIST_PAGE_SIZE)} style={{width:"100%",marginTop:10}}>Load {Math.min(remaining,HIST_PAGE_SIZE)} more ({remaining} left)</Btn>}
+          </Modal>
+        );
+      })()}
+      {showAllHist&&(()=>{
+        const txs=historyTxsAll();
+        const visibleTxs=txs.slice(0,allHistVisible);
+        const remaining=txs.length-visibleTxs.length;
+        return(
+          <Modal title="All Transactions" onClose={()=>setShowAllHist(false)} isDirty={false}>
+            {txs.length===0&&<div style={{color:T.faint,textAlign:"center",padding:16}}>No transactions yet.</div>}
+            <div style={{display:"flex",flexDirection:"column",gap:8,maxHeight:420,overflowY:"auto"}}>
+              {visibleTxs.map(t=>(
+                <div key={`${t.bankId}-${t.id}`} style={{background:T.card2,borderRadius:8,padding:"8px 12px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div>
+                      <div style={{fontSize:13,color:T.text}}>{t.desc}</div>
+                      <div style={{fontSize:11,color:T.faint}}>{t.bankName} · {t.envEmoji} {t.envName} · {t.date}{t.tag?<span style={{marginLeft:6,background:T.card,borderRadius:4,padding:"1px 6px"}}>{t.tag}</span>:null}</div>
+                      {t.note&&<div style={{fontSize:11,color:T.faint,marginTop:2,fontStyle:"italic"}}>{t.note}</div>}
+                    </div>
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <span style={{color:t.type==="income"?"#10B981":"#ef4444",fontWeight:600}}>{t.type==="income"?"+":"-"}{sym(t.bankCurrency)}{fmtNum(t.amount)}</span>
+                      <button onClick={()=>setEditHistTx({bankId:t.bankId,envId:t.envId,tx:t})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:13}}>✏️</button>
+                      <button onClick={()=>setConfirmDelHistTx({bankId:t.bankId,envId:t.envId,txId:t.id,desc:t.desc})} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer"}}>✕</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {remaining>0&&<Btn small outline color={T.subtext} onClick={()=>setAllHistVisible(v=>v+HIST_PAGE_SIZE)} style={{width:"100%",marginTop:10}}>Load {Math.min(remaining,HIST_PAGE_SIZE)} more ({remaining} left)</Btn>}
+          </Modal>
+        );
+      })()}
+      {editHistTx&&<TxEditModal tx={editHistTx.tx} tags={tags} onSave={saveHistTxEdit} onClose={()=>setEditHistTx(null)}/>}
+      {confirmDelHistTx&&<ConfirmModal message={`Delete transaction "${confirmDelHistTx.desc}"?`} onConfirm={delHistTx} onClose={()=>setConfirmDelHistTx(null)}/>}
       {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail="All its envelopes and transactions will be removed." requireDel onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
       {showBank&&<Modal title="Add Bank" onClose={()=>setShowBank(false)} isDirty={!!bankName||!!bankBal}>
         <Inp label="Bank Name" value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="e.g. BDO, DBS, Chase"/>
