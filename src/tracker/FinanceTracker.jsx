@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.4.1";
+const VERSION = "v5.4.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -337,21 +337,22 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
 
       <div style={{display:"flex",flexDirection:"column",gap:6}}>
         {envelopes.map(e=>(
-          <div key={e.id} style={{background:T.card2,borderRadius:8,padding:"10px 12px",border:`1px solid ${e.isUnalloc?T.border:color+"33"}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8}}>
+          <div key={e.id} style={{background:T.card2,borderRadius:8,padding:"10px 12px",border:`1px solid ${e.isUnalloc?T.border:color+"33"}`,display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,flexWrap:"wrap"}}>
             <div style={{display:"flex",alignItems:"center",gap:8,flex:1,minWidth:0}}>
               <span style={{fontSize:16}}>{e.isUnalloc?"📂":(e.emoji||"🗂️")}</span>
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{e.name}{e.goal?<span style={{fontSize:11,color:T.faint,marginLeft:6}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}</span>
+                <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",display:"flex",alignItems:"center",gap:6,minWidth:0}}>
+                  <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}}>{e.name}</span>
+                  {e.goal?<span style={{fontSize:11,color:T.faint,whiteSpace:"nowrap",flexShrink:0}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}
                   {!e.isUnalloc&&<button onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||""})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✏️</button>}
                 </div>
                 {e.goal&&!e.isUnalloc&&(()=>{const pct=Math.min(100,Math.round((e.balance/e.goal)*100));const rem=e.goal-e.balance;return(<div style={{marginTop:4}}><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct>=100?"#10B981":color,borderRadius:99}}/></div><div style={{fontSize:10,color:pct>=100?"#10B981":T.faint,marginTop:2}}>{pct}%{pct>=100?" ✓":<span style={{marginLeft:4,color:T.subtext}}>· {sym(currency)}{fmtNum(rem)} left</span>}</div></div>);})()}
                 {!e.goal&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
               </div>
             </div>
-            <div style={{display:"flex",gap:4,alignItems:"center",flexShrink:0,maxWidth:"55%"}}>
-              <div style={{textAlign:"right",minWidth:0}}>
-                <div style={{color:e.balance<0?"#ef4444":e.isUnalloc?T.faint:color,fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sym(currency)}{fmtNum(e.balance)}</div>
+            <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
+              <div style={{textAlign:"right"}}>
+                <div style={{color:e.balance<0?"#ef4444":e.isUnalloc?T.faint:color,fontWeight:600,fontSize:13,whiteSpace:"nowrap"}}>{sym(currency)}{fmtNum(e.balance)}</div>
                 {convCurrency&&<ConversionBadge amount={e.balance} fromCurrency={currency} toCurrency={convCurrency} style={{marginLeft:0}}/>}
               </div>
               <Btn small color={color} onClick={()=>setShowTx(e.id)}>+</Btn>
@@ -459,9 +460,17 @@ function BanksSection({banks,setBanks,tags}){
     const destBankId=destBank.id;
     const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
     const destTx={id:Date.now()+1,type:"income",desc:`Transfer from ${transferBank.name}${isCross?` · ${sym(srcCurrency)}${fmtNum(amt)} sent`:""}`,amount:received,tag:"Transfer",note:"",date};
+    const sameBank=String(srcBankId)===String(destBankId);
     setBanks(bs=>bs.map(b=>{
-      if(String(b.id)===String(srcBankId))return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
-      if(String(b.id)===String(destBankId))return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
+      if(sameBank&&String(b.id)===String(srcBankId)){
+        return{...b,balance:b.balance-totalDeducted+received,envelopes:b.envelopes.map(e=>{
+          if(String(e.id)===String(srcEnv.id))return{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]};
+          if(String(e.id)===String(destEnv.id))return{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]};
+          return e;
+        })};
+      }
+      if(!sameBank&&String(b.id)===String(srcBankId))return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
+      if(!sameBank&&String(b.id)===String(destBankId))return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
       return b;
     }));
     setTransferBank(null);
@@ -880,6 +889,16 @@ function AnalyticsSection({banks}){
     }catch{}
     return currencies;
   });
+  useEffect(()=>{
+    setSelectedCurrencies(prev=>{
+      const newOnes=currencies.filter(c=>!prev.includes(c));
+      if(newOnes.length===0)return prev;
+      const next=[...prev.filter(c=>currencies.includes(c)),...newOnes];
+      try{localStorage.setItem("analyticsCurrencies",JSON.stringify(next));}catch{}
+      return next;
+    });
+  // eslint-disable-next-line
+  },[currencies.join(",")]);
   const[targetCur,setTargetCur]=useState(()=>{try{return localStorage.getItem("analyticsTargetCurrency")||"USD";}catch{return "USD";}});
   const effectiveSelected=selectedCurrencies.filter(c=>currencies.includes(c));
   const activeCurrencies=effectiveSelected.length?effectiveSelected:currencies;
