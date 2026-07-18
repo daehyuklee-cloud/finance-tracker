@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.4.2";
+const VERSION = "v5.5.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -881,37 +881,42 @@ function AnalyticsSection({banks}){
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
   const[to,setTo]=useState(localDateStr());
-  const currencies=[...new Set(banks.map(b=>b.currency))];
-  const[selectedCurrencies,setSelectedCurrencies]=useState(()=>{
+  const accountIds=banks.map(b=>String(b.id));
+  const[selectedAccounts,setSelectedAccounts]=useState(()=>{
     try{
-      const saved=JSON.parse(localStorage.getItem("analyticsCurrencies")||"null");
+      const saved=JSON.parse(localStorage.getItem("analyticsAccounts")||"null");
       if(Array.isArray(saved)&&saved.length)return saved;
     }catch{}
-    return currencies;
+    return accountIds;
   });
   useEffect(()=>{
-    setSelectedCurrencies(prev=>{
-      const newOnes=currencies.filter(c=>!prev.includes(c));
+    setSelectedAccounts(prev=>{
+      const newOnes=accountIds.filter(id=>!prev.includes(id));
       if(newOnes.length===0)return prev;
-      const next=[...prev.filter(c=>currencies.includes(c)),...newOnes];
-      try{localStorage.setItem("analyticsCurrencies",JSON.stringify(next));}catch{}
+      const next=[...prev.filter(id=>accountIds.includes(id)),...newOnes];
+      try{localStorage.setItem("analyticsAccounts",JSON.stringify(next));}catch{}
       return next;
     });
   // eslint-disable-next-line
-  },[currencies.join(",")]);
+  },[accountIds.join(",")]);
   const[targetCur,setTargetCur]=useState(()=>{try{return localStorage.getItem("analyticsTargetCurrency")||"USD";}catch{return "USD";}});
-  const effectiveSelected=selectedCurrencies.filter(c=>currencies.includes(c));
-  const activeCurrencies=effectiveSelected.length?effectiveSelected:currencies;
-  const toggleCurrency=c=>{
-    setSelectedCurrencies(prev=>{
-      const base=prev.filter(x=>currencies.includes(x));
-      const next=base.includes(c)?base.filter(x=>x!==c):[...base,c];
-      try{localStorage.setItem("analyticsCurrencies",JSON.stringify(next));}catch{}
+  const effectiveSelected=selectedAccounts.filter(id=>accountIds.includes(id));
+  const activeAccounts=effectiveSelected.length?effectiveSelected:accountIds;
+  const allSelected=activeAccounts.length===accountIds.length;
+  const toggleAccount=id=>{
+    setSelectedAccounts(prev=>{
+      const base=prev.filter(x=>accountIds.includes(x));
+      const next=base.includes(id)?base.filter(x=>x!==id):[...base,id];
+      try{localStorage.setItem("analyticsAccounts",JSON.stringify(next));}catch{}
       return next;
     });
   };
+  const selectAllAccounts=()=>{
+    try{localStorage.setItem("analyticsAccounts",JSON.stringify(accountIds));}catch{}
+    setSelectedAccounts(accountIds);
+  };
   const setTargetPersist=c=>{setTargetCur(c);try{localStorage.setItem("analyticsTargetCurrency",c);}catch{}};
-  const allTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>activeCurrencies.includes(t.currency)&&t.date>=from&&t.date<=to);
+  const allTx=banks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date>=from&&t.date<=to);
   const converted=useConvertedItems(allTx,targetCur);
   const loading=converted===null;
   const txForCalc=converted||[];
@@ -934,18 +939,20 @@ function AnalyticsSection({banks}){
         </div>
       </div>
       <div style={{marginBottom:16}}>
-        <div style={{fontSize:11,color:T.subtext,marginBottom:6}}>Currencies included</div>
+        <div style={{fontSize:11,color:T.subtext,marginBottom:6}}>Accounts included</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-          {currencies.length===0&&<span style={{fontSize:12,color:T.faint}}>No banks yet.</span>}
-          {currencies.map(c=>{
-            const on=activeCurrencies.includes(c);
+          {banks.length===0&&<span style={{fontSize:12,color:T.faint}}>No banks yet.</span>}
+          <button onClick={selectAllAccounts} style={{background:allSelected?T.text:T.card,color:allSelected?T.bg:T.subtext,border:`1px solid ${allSelected?T.text:T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>All accounts</button>
+          {banks.map(b=>{
+            const on=activeAccounts.includes(String(b.id));
+            const c=bankColor(b);
             return(
-              <button key={c} onClick={()=>toggleCurrency(c)} style={{background:on?getCurrencyColor(c):T.card,color:on?"#fff":T.subtext,border:`1px solid ${on?getCurrencyColor(c):T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:500}}>{c}</button>
+              <button key={b.id} onClick={()=>toggleAccount(String(b.id))} style={{background:on?c:T.card,color:on?"#fff":T.subtext,border:`1px solid ${on?c:T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:500}}>{b.name} <span style={{opacity:0.85}}>({b.currency})</span></button>
             );
           })}
         </div>
       </div>
-      {loading&&currencies.length>0&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
+      {loading&&banks.length>0&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
       {!loading&&<>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
           <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #10B98133"}}><div style={{fontSize:12,color:T.subtext}}>Income</div><div style={{fontSize:22,fontWeight:700,color:"#10B981"}}>{sym(targetCur)}{fmtNum(income)}</div></div>
