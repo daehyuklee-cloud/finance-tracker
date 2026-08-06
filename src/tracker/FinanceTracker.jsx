@@ -10,10 +10,65 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.5.0";
+const VERSION = "v5.6.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const SHEET_COLS=8;
+const SHEET_INITIAL_ROWS=10;
+const SHEET_MAX_ROWS=40;
+function colLetter(i){return String.fromCharCode(65+i);}
+function roundNum(n){return isFinite(n)?Math.round(n*10000)/10000:n;}
+function evalSheetCell(cells,key,visiting,memo){
+  if(memo.has(key))return memo.get(key);
+  if(visiting.has(key)){memo.set(key,NaN);return NaN;}
+  const raw=cells[key];
+  if(raw===undefined||raw===""){memo.set(key,0);return 0;}
+  if(typeof raw==="string"&&raw.trim().startsWith("=")){
+    visiting.add(key);
+    const val=evalSheetExpr(raw.trim().slice(1),cells,visiting,memo);
+    visiting.delete(key);
+    memo.set(key,val);
+    return val;
+  }
+  const num=parseFloat(raw);
+  const val=isNaN(num)?NaN:num;
+  memo.set(key,val);
+  return val;
+}
+function evalSheetExpr(expr,cells,visiting,memo){
+  const tokens=expr.match(/[A-Za-z]+\d+|\d+\.?\d*|\.\d+|[+\-*/()]/g)||[];
+  let pos=0;
+  const peek=()=>tokens[pos];
+  const next=()=>tokens[pos++];
+  function parseExpr(){
+    let val=parseTerm();
+    while(peek()==="+"||peek()==="-"){const op=next();const rhs=parseTerm();val=op==="+"?val+rhs:val-rhs;}
+    return val;
+  }
+  function parseTerm(){
+    let val=parseFactor();
+    while(peek()==="*"||peek()==="/"){const op=next();const rhs=parseFactor();val=op==="*"?val*rhs:(rhs===0?NaN:val/rhs);}
+    return val;
+  }
+  function parseFactor(){
+    if(peek()==="-"){next();return -parseFactor();}
+    if(peek()==="+"){next();return parseFactor();}
+    if(peek()==="("){next();const val=parseExpr();if(peek()===")")next();return val;}
+    const tok=next();
+    if(tok===undefined)return 0;
+    if(/^[A-Za-z]+\d+$/.test(tok))return evalSheetCell(cells,tok.toUpperCase(),visiting,memo);
+    const num=parseFloat(tok);
+    return isNaN(num)?0:num;
+  }
+  if(tokens.length===0)return 0;
+  return parseExpr();
+}
+function computeSheet(cells){
+  const memo=new Map();const visiting=new Set();const out={};
+  Object.keys(cells).forEach(key=>{out[key]=evalSheetCell(cells,key,visiting,memo);});
+  return out;
+}
 function getCurrencyColor(currency){ const idx=CURRENCY_LIST.indexOf(currency); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
 function bankColor(b){ return b.color||getCurrencyColor(b.currency); }
 function localDateStr(){ const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
@@ -191,6 +246,7 @@ function TxEditModal({tx,tags,onSave,onClose}){
 
 function TransferModal({bank,allBanks,onClose,onTransfer}){
   const color=bankColor(bank);
+  const[fromExternal,setFromExternal]=useState(false);
   const[fromEnvId,setFromEnvId]=useState(bank.envelopes[0]?.id||"");
   const[toBank,setToBank]=useState(String(bank.id));
   const[toEnvId,setToEnvId]=useState("");
@@ -199,48 +255,59 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
   const[received,setReceived]=useState("");
   const[err,setErr]=useState("");
   const srcEnvs=bank.envelopes||[];
-  const destBank=allBanks.find(b=>String(b.id)===String(toBank));
+  const toExternal=toBank==="external";
+  const destBank=toExternal?null:allBanks.find(b=>String(b.id)===String(toBank));
   const destEnvs=destBank?.envelopes||[];
-  const isCross=destBank&&destBank.currency!==bank.currency;
+  const isCross=!fromExternal&&!toExternal&&destBank&&destBank.currency!==bank.currency;
   const isDirty=!!amt||!!fee||!!received;
-  useEffect(()=>{setToEnvId(destEnvs[0]?.id||"");},[toBank]);
+  useEffect(()=>{if(!toExternal)setToEnvId(destEnvs[0]?.id||"");},[toBank]);
+  useEffect(()=>{if(fromExternal&&toExternal)setToBank(String(bank.id));},[fromExternal]);
   const doTransfer=()=>{
     setErr("");
     const a=parseFloat(amt)||0;
-    const f=parseFloat(fee)||0;
+    const f=fromExternal?0:(parseFloat(fee)||0);
     const total=a+f;
-    const srcEnv=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
-    const destEnv=destEnvs.find(e=>String(e.id)===String(toEnvId));
-    if(!srcEnv){setErr("Please select a source envelope.");return;}
-    if(!destEnv){setErr("Please select a destination envelope.");return;}
-    if(String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){setErr("Source and destination must differ.");return;}
     if(a<=0){setErr("Please enter an amount greater than 0.");return;}
-    if(srcEnv.balance<total){setErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
+    let srcEnv=null,destEnv=null;
+    if(!fromExternal){
+      srcEnv=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
+      if(!srcEnv){setErr("Please select a source envelope.");return;}
+      if(!toExternal&&String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){setErr("Source and destination must differ.");return;}
+      if(srcEnv.balance<total){setErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
+    }
+    if(!toExternal){
+      destEnv=destEnvs.find(e=>String(e.id)===String(toEnvId));
+      if(!destEnv){setErr("Please select a destination envelope.");return;}
+    }
     const rec=isCross?(parseFloat(received)||0):a;
     if(isCross&&!rec){setErr("Please enter the amount received in the destination currency.");return;}
-    onTransfer({srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:destBank.currency});
+    onTransfer({fromExternal,toExternal,srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:toExternal?bank.currency:destBank.currency});
     onClose();
   };
   return(
     <Modal title="Transfer" onClose={onClose} isDirty={isDirty}>
       <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>From</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <div style={{flex:1,background:T.card2,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>{bank.name}</div>
-        <select value={fromEnvId} onChange={e=>setFromEnvId(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
+        <div style={{display:"flex",flex:1,gap:6}}>
+          <button onClick={()=>setFromExternal(false)} style={{flex:1,background:!fromExternal?color:T.card2,color:!fromExternal?"#fff":T.subtext,border:`1px solid ${!fromExternal?color:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,cursor:"pointer"}}>{bank.name}</button>
+          <button onClick={()=>setFromExternal(true)} style={{flex:1,background:fromExternal?color:T.card2,color:fromExternal?"#fff":T.subtext,border:`1px solid ${fromExternal?color:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,cursor:"pointer"}}>External</button>
+        </div>
+        {!fromExternal&&<select value={fromEnvId} onChange={e=>setFromEnvId(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
           {srcEnvs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(bank.currency)}{fmtNum(e.balance)})</option>)}
-        </select>
+        </select>}
       </div>
       <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>To</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
         <select value={toBank} onChange={e=>setToBank(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
           {allBanks.map(b=><option key={b.id} value={String(b.id)}>{b.name} ({b.currency})</option>)}
+          {!fromExternal&&<option value="external">External</option>}
         </select>
-        <select value={toEnvId} onChange={e=>setToEnvId(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
+        {!toExternal&&<select value={toEnvId} onChange={e=>setToEnvId(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
           {destEnvs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(destBank?.currency)}{fmtNum(e.balance)})</option>)}
-        </select>
+        </select>}
       </div>
-      <Inp label={`Amount to send (${bank.currency})`} type="number" value={amt} onChange={e=>{setErr("");setAmt(e.target.value);}} placeholder="0.00"/>
-      <Inp label={`Fee (${bank.currency}) — on top of transfer amount`} type="number" value={fee} onChange={e=>setFee(e.target.value)} placeholder="0.00 (optional)"/>
+      <Inp label={`Amount ${fromExternal?"received":"to send"} (${bank.currency})`} type="number" value={amt} onChange={e=>{setErr("");setAmt(e.target.value);}} placeholder="0.00"/>
+      {!fromExternal&&<Inp label={`Fee (${bank.currency}) — on top of transfer amount`} type="number" value={fee} onChange={e=>setFee(e.target.value)} placeholder="0.00 (optional)"/>}
       {isCross&&(
         <div style={{background:"#F59E0B22",border:"1px solid #F59E0B44",borderRadius:8,padding:10,marginBottom:12}}>
           <div style={{fontSize:12,color:"#F59E0B",marginBottom:8}}>💱 Cross-currency transfer</div>
@@ -249,8 +316,8 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
       )}
       {amt&&(
         <div style={{background:T.card2,borderRadius:8,padding:10,marginBottom:12,fontSize:12,color:T.subtext}}>
-          <div>Source deducted: <strong style={{color:"#ef4444"}}>{sym(bank.currency)}{fmtNum((parseFloat(amt)||0)+(parseFloat(fee)||0))}</strong>{fee?` (${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)} + ${sym(bank.currency)}${fmtNum(parseFloat(fee)||0)} fee)`:""}</div>
-          <div style={{marginTop:4}}>Destination receives: <strong style={{color:"#10B981"}}>{isCross?(received?`${sym(destBank?.currency)}${fmtNum(parseFloat(received)||0)}`:"—"):`${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)}`}</strong></div>
+          {!fromExternal&&<div>Source deducted: <strong style={{color:"#ef4444"}}>{sym(bank.currency)}{fmtNum((parseFloat(amt)||0)+(parseFloat(fee)||0))}</strong>{fee?` (${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)} + ${sym(bank.currency)}${fmtNum(parseFloat(fee)||0)} fee)`:""}</div>}
+          <div style={{marginTop:fromExternal?0:4}}>Destination receives: <strong style={{color:"#10B981"}}>{isCross?(received?`${sym(destBank?.currency)}${fmtNum(parseFloat(received)||0)}`:"—"):`${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)}`}</strong></div>
         </div>
       )}
       <FormError msg={err}/>
@@ -453,9 +520,23 @@ function BanksSection({banks,setBanks,tags}){
     setEditBank(null);
   };
   const delBank=id=>{setBanks(b=>b.filter(x=>x.id!==id));setConfirmDel(null);};
-  const doTransfer=({srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency})=>{
-    const totalDeducted=amt+fee;
+  const doTransfer=({fromExternal,toExternal,srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency})=>{
     const date=localDateStr();
+    if(fromExternal){
+      const destTx={id:Date.now(),type:"income",desc:"Received from External account",amount:received,tag:"Transfer",note:"",date};
+      setBanks(bs=>bs.map(b=>String(b.id)===String(destBank.id)?{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)}:b));
+      setTransferBank(null);
+      return;
+    }
+    if(toExternal){
+      const totalDeducted=amt+fee;
+      const srcTx={id:Date.now(),type:"expense",desc:`Sent to External account${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
+      const srcBankId=transferBank.id;
+      setBanks(bs=>bs.map(b=>String(b.id)===String(srcBankId)?{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)}:b));
+      setTransferBank(null);
+      return;
+    }
+    const totalDeducted=amt+fee;
     const srcBankId=transferBank.id;
     const destBankId=destBank.id;
     const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
@@ -916,7 +997,7 @@ function AnalyticsSection({banks}){
     setSelectedAccounts(accountIds);
   };
   const setTargetPersist=c=>{setTargetCur(c);try{localStorage.setItem("analyticsTargetCurrency",c);}catch{}};
-  const allTx=banks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date>=from&&t.date<=to);
+  const allTx=banks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date>=from&&t.date<=to&&t.tag!=="Transfer");
   const converted=useConvertedItems(allTx,targetCur);
   const loading=converted===null;
   const txForCalc=converted||[];
@@ -966,29 +1047,147 @@ function AnalyticsSection({banks}){
     </div>
   );
 }
+function ChecklistNote({note,onUpdate,onDelete}){
+  const items=note.items||[];
+  const addItem=()=>onUpdate({...note,items:[...items,{id:Date.now(),text:"",checked:false}]});
+  const updateItem=(id,patch)=>onUpdate({...note,items:items.map(it=>it.id===id?{...it,...patch}:it)});
+  const delItem=id=>onUpdate({...note,items:items.filter(it=>it.id!==id)});
+  return(
+    <div style={{background:"#FEF3C7",borderRadius:8,padding:12,minHeight:140,boxShadow:"0 2px 8px rgba(0,0,0,0.2)",display:"flex",flexDirection:"column"}}>
+      <input value={note.title||""} onChange={e=>onUpdate({...note,title:e.target.value})} placeholder="Checklist title" style={{background:"transparent",border:"none",outline:"none",color:"#451a03",fontWeight:700,fontSize:13,marginBottom:8}}/>
+      <div style={{flex:1,display:"flex",flexDirection:"column",gap:4}}>
+        {items.map(it=>(
+          <div key={it.id} style={{display:"flex",alignItems:"center",gap:6}}>
+            <input type="checkbox" checked={!!it.checked} onChange={e=>updateItem(it.id,{checked:e.target.checked})}/>
+            <input value={it.text} onChange={e=>updateItem(it.id,{text:e.target.value})} placeholder="Item" style={{flex:1,minWidth:0,background:"transparent",border:"none",outline:"none",color:"#451a03",fontSize:13,textDecoration:it.checked?"line-through":"none",opacity:it.checked?0.6:1}}/>
+            <button onClick={()=>delItem(it.id)} style={{background:"none",border:"none",color:"#b45309",cursor:"pointer",fontSize:14,flexShrink:0}}>×</button>
+          </div>
+        ))}
+        {items.length===0&&<div style={{fontSize:12,color:"#b45309",opacity:0.7}}>No items yet.</div>}
+      </div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+        <button onClick={addItem} style={{background:"none",border:"none",color:"#b45309",cursor:"pointer",fontSize:12}}>+ item</button>
+        <button onClick={onDelete} style={{background:"none",border:"none",color:"#b45309",cursor:"pointer",fontSize:13}}>🗑</button>
+      </div>
+    </div>
+  );
+}
+function SheetNote({note,onUpdate,onDelete}){
+  const cells=note.cells||{};
+  const rows=note.rows||SHEET_INITIAL_ROWS;
+  const[editingKey,setEditingKey]=useState(null);
+  const[editVal,setEditVal]=useState("");
+  const computed=computeSheet(cells);
+  const setCell=(key,val)=>{
+    const next={...cells};
+    if(val==="")delete next[key];else next[key]=val;
+    onUpdate({...note,cells:next});
+  };
+  const startEdit=key=>{setEditingKey(key);setEditVal(cells[key]||"");};
+  const commitEdit=()=>{if(editingKey!==null)setCell(editingKey,editVal);setEditingKey(null);};
+  const displayValue=key=>{
+    const raw=cells[key];
+    if(!raw)return"";
+    if(typeof raw==="string"&&raw.trim().startsWith("=")){
+      const v=computed[key];
+      return isNaN(v)?"#ERR":String(roundNum(v));
+    }
+    return raw;
+  };
+  const addRow=()=>{if(rows<SHEET_MAX_ROWS)onUpdate({...note,rows:rows+1});};
+  return(
+    <div style={{gridColumn:"1/-1",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <input value={note.title||""} onChange={e=>onUpdate({...note,title:e.target.value})} placeholder="Sheet title" style={{background:"transparent",border:"none",outline:"none",color:T.text,fontWeight:700,fontSize:14,flex:1}}/>
+        <button onClick={onDelete} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14}}>🗑</button>
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table style={{borderCollapse:"collapse"}}>
+          <thead>
+            <tr>
+              <th style={{width:32}}></th>
+              {Array.from({length:SHEET_COLS}).map((_,c)=><th key={c} style={{fontSize:11,color:T.subtext,padding:"2px 4px",fontWeight:600}}>{colLetter(c)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({length:rows}).map((_,r)=>{
+              const rowNum=r+1;
+              return(
+                <tr key={rowNum}>
+                  <td style={{fontSize:11,color:T.faint,textAlign:"right",paddingRight:4}}>{rowNum}</td>
+                  {Array.from({length:SHEET_COLS}).map((_,c)=>{
+                    const key=`${colLetter(c)}${rowNum}`;
+                    const isEditing=editingKey===key;
+                    return(
+                      <td key={key} style={{padding:1}}>
+                        <input
+                          value={isEditing?editVal:displayValue(key)}
+                          onFocus={()=>startEdit(key)}
+                          onChange={e=>setEditVal(e.target.value)}
+                          onBlur={commitEdit}
+                          onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+                          placeholder=""
+                          style={{width:64,background:T.input,border:`1px solid ${T.border}`,borderRadius:4,padding:"3px 5px",color:T.text,fontSize:12,textAlign:isEditing?"left":"right"}}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {rows<SHEET_MAX_ROWS&&<button onClick={addRow} style={{marginTop:8,background:"none",border:`1px solid ${T.border}`,color:T.subtext,cursor:"pointer",fontSize:12,borderRadius:6,padding:"4px 10px"}}>+ Add row</button>}
+      <div style={{fontSize:10,color:T.faint,marginTop:6}}>Start a cell with = to use a formula, e.g. =A1+B2*3</div>
+    </div>
+  );
+}
 function NotesSection({notesState}){
   const[notes,setNotes,undo,redo,canUndo,canRedo]=notesState;
   const[confirmDel,setConfirmDel]=useState(null);
-  const add=()=>setNotes(n=>[{id:Date.now(),text:""},...n]);
-  const update=(id,text)=>setNotes(n=>n.map(x=>x.id===id?{...x,text}:x));
-  const reqDel=note=>{if(note.text.trim()==="")setNotes(n=>n.filter(x=>x.id!==note.id));else setConfirmDel(note);};
+  const[showTypePicker,setShowTypePicker]=useState(false);
+  const addSticky=()=>{setNotes(n=>[{id:Date.now(),type:"sticky",text:""},...n]);setShowTypePicker(false);};
+  const addChecklist=()=>{setNotes(n=>[{id:Date.now(),type:"checklist",title:"",items:[]},...n]);setShowTypePicker(false);};
+  const addSheet=()=>{setNotes(n=>[{id:Date.now(),type:"sheet",title:"",cells:{},rows:SHEET_INITIAL_ROWS},...n]);setShowTypePicker(false);};
+  const updateText=(id,text)=>setNotes(n=>n.map(x=>x.id===id?{...x,text}:x));
+  const replaceNote=updated=>setNotes(n=>n.map(x=>x.id===updated.id?updated:x));
+  const isEmpty=note=>{
+    const type=note.type||"sticky";
+    if(type==="checklist")return!note.items||note.items.length===0||note.items.every(it=>!it.text||it.text.trim()==="");
+    if(type==="sheet")return!note.cells||Object.keys(note.cells).length===0;
+    return!note.text||note.text.trim()==="";
+  };
+  const reqDel=note=>{if(isEmpty(note))setNotes(n=>n.filter(x=>x.id!==note.id));else setConfirmDel(note);};
   const del=id=>{setNotes(n=>n.filter(x=>x.id!==id));setConfirmDel(null);};
   return(
     <div>
       <UndoBar undo={undo} redo={redo} canUndo={canUndo} canRedo={canRedo}/>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <span style={{fontSize:13,color:T.subtext}}>Sticky notes — auto-saved</span>
-        <Btn color="#10B981" onClick={add}>+ New Note</Btn>
+        <span style={{fontSize:13,color:T.subtext}}>Notes — auto-saved</span>
+        <Btn color="#10B981" onClick={()=>setShowTypePicker(true)}>+ New Note</Btn>
       </div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
-        {notes.map(note=>(
-          <div key={note.id} style={{background:"#FEF3C7",borderRadius:8,padding:12,minHeight:140,boxShadow:"0 2px 8px rgba(0,0,0,0.2)",display:"flex",flexDirection:"column"}}>
-            <textarea value={note.text} onChange={e=>update(note.id,e.target.value)} placeholder="Write something..." style={{flex:1,background:"transparent",border:"none",resize:"none",outline:"none",color:"#451a03",fontSize:14,lineHeight:1.5,fontFamily:"system-ui"}}/>
-            <button onClick={()=>reqDel(note)} style={{alignSelf:"flex-end",background:"none",border:"none",color:"#b45309",cursor:"pointer",fontSize:13,marginTop:4}}>🗑</button>
-          </div>
-        ))}
+        {notes.map(note=>{
+          const type=note.type||"sticky";
+          if(type==="checklist")return<ChecklistNote key={note.id} note={note} onUpdate={replaceNote} onDelete={()=>reqDel(note)}/>;
+          if(type==="sheet")return<SheetNote key={note.id} note={note} onUpdate={replaceNote} onDelete={()=>reqDel(note)}/>;
+          return(
+            <div key={note.id} style={{background:"#FEF3C7",borderRadius:8,padding:12,minHeight:140,boxShadow:"0 2px 8px rgba(0,0,0,0.2)",display:"flex",flexDirection:"column"}}>
+              <textarea value={note.text||""} onChange={e=>updateText(note.id,e.target.value)} placeholder="Write something..." style={{flex:1,background:"transparent",border:"none",resize:"none",outline:"none",color:"#451a03",fontSize:14,lineHeight:1.5,fontFamily:"system-ui"}}/>
+              <button onClick={()=>reqDel(note)} style={{alignSelf:"flex-end",background:"none",border:"none",color:"#b45309",cursor:"pointer",fontSize:13,marginTop:4}}>🗑</button>
+            </div>
+          );
+        })}
         {notes.length===0&&<div style={{color:T.faint,gridColumn:"1/-1",textAlign:"center",padding:32}}>No notes yet — add one!</div>}
       </div>
+      {showTypePicker&&<Modal title="New Note" onClose={()=>setShowTypePicker(false)} isDirty={false}>
+        <div style={{display:"flex",flexDirection:"column",gap:8}}>
+          <Btn color="#F59E0B" onClick={addSticky}>📝 Sticky Note</Btn>
+          <Btn color="#3B82F6" onClick={addChecklist}>☑️ Checklist</Btn>
+          <Btn color="#10B981" onClick={addSheet}>📊 Sheet</Btn>
+        </div>
+      </Modal>}
       {confirmDel&&<ConfirmModal message="Delete this note?" detail="It has content that will be lost." onConfirm={()=>del(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
     </div>
   );
