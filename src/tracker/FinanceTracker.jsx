@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.6.0";
+const VERSION = "v5.6.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -288,10 +288,10 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
     <Modal title="Transfer" onClose={onClose} isDirty={isDirty}>
       <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>From</div>
       <div style={{display:"flex",gap:8,marginBottom:12}}>
-        <div style={{display:"flex",flex:1,gap:6}}>
-          <button onClick={()=>setFromExternal(false)} style={{flex:1,background:!fromExternal?color:T.card2,color:!fromExternal?"#fff":T.subtext,border:`1px solid ${!fromExternal?color:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,cursor:"pointer"}}>{bank.name}</button>
-          <button onClick={()=>setFromExternal(true)} style={{flex:1,background:fromExternal?color:T.card2,color:fromExternal?"#fff":T.subtext,border:`1px solid ${fromExternal?color:T.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,cursor:"pointer"}}>External</button>
-        </div>
+        <select value={fromExternal?"external":"bank"} onChange={e=>setFromExternal(e.target.value==="external")} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
+          <option value="bank">{bank.name}</option>
+          <option value="external">External</option>
+        </select>
         {!fromExternal&&<select value={fromEnvId} onChange={e=>setFromEnvId(e.target.value)} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
           {srcEnvs.map(e=><option key={e.id} value={e.id}>{e.name} ({sym(bank.currency)}{fmtNum(e.balance)})</option>)}
         </select>}
@@ -1075,9 +1075,11 @@ function ChecklistNote({note,onUpdate,onDelete}){
 function SheetNote({note,onUpdate,onDelete}){
   const cells=note.cells||{};
   const rows=note.rows||SHEET_INITIAL_ROWS;
+  const[expanded,setExpanded]=useState(false);
   const[editingKey,setEditingKey]=useState(null);
   const[editVal,setEditVal]=useState("");
   const computed=computeSheet(cells);
+  const filledCount=Object.keys(cells).filter(k=>cells[k]!=="").length;
   const setCell=(key,val)=>{
     const next={...cells};
     if(val==="")delete next[key];else next[key]=val;
@@ -1095,11 +1097,29 @@ function SheetNote({note,onUpdate,onDelete}){
     return raw;
   };
   const addRow=()=>{if(rows<SHEET_MAX_ROWS)onUpdate({...note,rows:rows+1});};
+  if(!expanded){
+    return(
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12,minHeight:140,boxShadow:"0 2px 8px rgba(0,0,0,0.15)",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+          <span style={{fontSize:16}}>📊</span>
+          <input value={note.title||""} onChange={e=>onUpdate({...note,title:e.target.value})} placeholder="Sheet title" style={{background:"transparent",border:"none",outline:"none",color:T.text,fontWeight:700,fontSize:13,flex:1,minWidth:0}}/>
+        </div>
+        <div style={{flex:1,fontSize:12,color:T.faint}}>{filledCount===0?"Empty sheet":`${filledCount} cell${filledCount!==1?"s":""} filled`}</div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}}>
+          <button onClick={()=>setExpanded(true)} style={{background:"none",border:`1px solid ${T.border}`,color:T.subtext,cursor:"pointer",fontSize:12,borderRadius:6,padding:"4px 10px"}}>Open</button>
+          <button onClick={onDelete} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:13}}>🗑</button>
+        </div>
+      </div>
+    );
+  }
   return(
     <div style={{gridColumn:"1/-1",background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
         <input value={note.title||""} onChange={e=>onUpdate({...note,title:e.target.value})} placeholder="Sheet title" style={{background:"transparent",border:"none",outline:"none",color:T.text,fontWeight:700,fontSize:14,flex:1}}/>
-        <button onClick={onDelete} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14}}>🗑</button>
+        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+          <button onClick={()=>setExpanded(false)} style={{background:"none",border:`1px solid ${T.border}`,color:T.subtext,cursor:"pointer",fontSize:12,borderRadius:6,padding:"4px 10px"}}>Collapse</button>
+          <button onClick={onDelete} style={{background:"none",border:"none",color:"#ef4444",cursor:"pointer",fontSize:14}}>🗑</button>
+        </div>
       </div>
       <div style={{overflowX:"auto"}}>
         <table style={{borderCollapse:"collapse"}}>
