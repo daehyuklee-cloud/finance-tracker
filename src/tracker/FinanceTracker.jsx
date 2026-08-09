@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.6.1";
+const VERSION = "v5.6.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1509,6 +1509,27 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
   },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,userId,isOnline]);
+
+  useEffect(()=>{
+    const flushPendingSave=()=>{
+      if(!initialLoadDone.current)return;
+      if(saveTimerRef.current){
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current=null;
+        const payload=getCurrentPayload.current?.();
+        if(payload)saveData(userId,payload);
+      }
+    };
+    const onVisibilityChange=()=>{if(document.hidden)flushPendingSave();};
+    document.addEventListener("visibilitychange",onVisibilityChange);
+    window.addEventListener("pagehide",flushPendingSave);
+    window.addEventListener("beforeunload",flushPendingSave);
+    return()=>{
+      document.removeEventListener("visibilitychange",onVisibilityChange);
+      window.removeEventListener("pagehide",flushPendingSave);
+      window.removeEventListener("beforeunload",flushPendingSave);
+    };
+  },[userId]);
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
