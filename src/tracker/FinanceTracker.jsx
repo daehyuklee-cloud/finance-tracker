@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.6.2";
+const VERSION = "v5.7.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -197,6 +197,10 @@ function makeBank(name,currency,balance,color){
   return{id:Date.now(),name,currency,color:color||null,balance,envelopes:[{id:UNALLOC_ID,name:"Unallocated",emoji:"📂",balance,transactions:[],isUnalloc:true}]};
 }
 function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
+function envelopeMonthSpend(env){
+  const monthKey=localDateStr().slice(0,7);
+  return(env.transactions||[]).filter(t=>t.type==="expense"&&t.date&&t.date.slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
+}
 
 function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
   const[err,setErr]=useState("");
@@ -338,6 +342,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   const[envName,setEnvName]=useState("");
   const[envBal,setEnvBal]=useState("");
   const[envGoal,setEnvGoal]=useState("");
+  const[envBudget,setEnvBudget]=useState("");
   const[envEmoji,setEnvEmoji]=useState("🗂️");
   const[convCurrency,setConvCurrency]=useState("");
   const[tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
@@ -347,11 +352,11 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   const addEnvelope=()=>{
     if(!envName.trim())return;
     const amt=parseFloat(envBal)||0;
-    updateBank(b=>({...b,balance:b.balance+amt,envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,transactions:[]}]}));
-    setEnvName("");setEnvBal("");setEnvGoal("");setEnvEmoji("🗂️");setShowAdd(false);
+    updateBank(b=>({...b,balance:b.balance+amt,envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,budget:parseFloat(envBudget)||null,transactions:[]}]}));
+    setEnvName("");setEnvBal("");setEnvGoal("");setEnvBudget("");setEnvEmoji("🗂️");setShowAdd(false);
   };
   const saveEnvEdit=()=>{
-    updateBank(b=>({...b,envelopes:b.envelopes.map(e=>e.id!==editEnv.id?e:{...e,name:editEnv.name,emoji:editEnv.emoji,goal:parseFloat(editEnv.goal)||null})}));
+    updateBank(b=>({...b,envelopes:b.envelopes.map(e=>e.id!==editEnv.id?e:{...e,name:editEnv.name,emoji:editEnv.emoji,goal:parseFloat(editEnv.goal)||null,budget:parseFloat(editEnv.budget)||null})}));
     setEditEnv(null);
   };
   const delEnvelope=envId=>{
@@ -411,10 +416,11 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
                 <div style={{fontSize:13,color:e.isUnalloc?T.faint:T.text,fontStyle:e.isUnalloc?"italic":"normal",display:"flex",alignItems:"center",gap:6,minWidth:0}}>
                   <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",minWidth:0}}>{e.name}</span>
                   {e.goal?<span style={{fontSize:11,color:T.faint,whiteSpace:"nowrap",flexShrink:0}}>Goal: {sym(currency)}{fmtNum(e.goal)}</span>:null}
-                  {!e.isUnalloc&&<button onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||""})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✏️</button>}
+                  {!e.isUnalloc&&<button onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||"",budget:e.budget||""})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✏️</button>}
                 </div>
                 {e.goal&&!e.isUnalloc&&(()=>{const pct=Math.min(100,Math.round((e.balance/e.goal)*100));const rem=e.goal-e.balance;return(<div style={{marginTop:4}}><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct>=100?"#10B981":color,borderRadius:99}}/></div><div style={{fontSize:10,color:pct>=100?"#10B981":T.faint,marginTop:2}}>{pct}%{pct>=100?" ✓":<span style={{marginLeft:4,color:T.subtext}}>· {sym(currency)}{fmtNum(rem)} left</span>}</div></div>);})()}
-                {!e.goal&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
+                {e.budget&&!e.isUnalloc&&(()=>{const spent=envelopeMonthSpend(e);const pct=Math.min(100,Math.round((spent/e.budget)*100));const over=spent>e.budget;const rem=e.budget-spent;return(<div style={{marginTop:4}}><div style={{fontSize:10,color:T.faint,marginBottom:1}}>Budget this month</div><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:over?"#ef4444":"#F59E0B",borderRadius:99}}/></div><div style={{fontSize:10,color:over?"#ef4444":T.faint,marginTop:2}}>{sym(currency)}{fmtNum(spent)} / {sym(currency)}{fmtNum(e.budget)}{over?` · ${sym(currency)}${fmtNum(Math.abs(rem))} over`:` · ${sym(currency)}${fmtNum(rem)} left`}</div></div>);})()}
+                {!e.goal&&!e.budget&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
               </div>
             </div>
             <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap",justifyContent:"flex-end"}}>
@@ -433,12 +439,13 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
       {confirmDelEnv&&<ConfirmModal message={`Delete envelope "${confirmDelEnv.name}"?`} detail="This will remove the envelope and its balance from the bank total." requireDel onConfirm={()=>delEnvelope(confirmDelEnv.id)} onClose={()=>setConfirmDelEnv(null)}/>}
       {confirmDelTx&&<ConfirmModal message={`Delete transaction "${confirmDelTx.desc}"?`} onConfirm={()=>delTx(confirmDelTx.envId,confirmDelTx.txId)} onClose={()=>setConfirmDelTx(null)}/>}
 
-      {showAdd&&<Modal title="New Envelope" onClose={()=>setShowAdd(false)} isDirty={!!envName||!!envBal||!!envGoal}>
+      {showAdd&&<Modal title="New Envelope" onClose={()=>setShowAdd(false)} isDirty={!!envName||!!envBal||!!envGoal||!!envBudget}>
         <Inp label="Name" value={envName} onChange={e=>setEnvName(e.target.value)} placeholder="e.g. Rent, Emergency"/>
         <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Icon</div>
         <EmojiPicker value={envEmoji} onPick={setEnvEmoji}/>
         <Inp label="Starting Amount" type="number" value={envBal} onChange={e=>setEnvBal(e.target.value)} placeholder="0.00"/>
         <Inp label="Goal (optional)" type="number" value={envGoal} onChange={e=>setEnvGoal(e.target.value)} placeholder="e.g. 10000"/>
+        <Inp label="Monthly Budget (optional)" type="number" value={envBudget} onChange={e=>setEnvBudget(e.target.value)} placeholder="e.g. 500 — resets each month"/>
         <Btn color={color} onClick={addEnvelope} style={{width:"100%"}}>Create Envelope</Btn>
       </Modal>}
 
@@ -447,6 +454,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
         <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Icon</div>
         <EmojiPicker value={editEnv.emoji} onPick={em=>setEditEnv(v=>({...v,emoji:em}))}/>
         <Inp label="Goal (blank to remove)" type="number" value={editEnv.goal} onChange={e=>setEditEnv(v=>({...v,goal:e.target.value}))}/>
+        <Inp label="Monthly Budget (blank to remove)" type="number" value={editEnv.budget} onChange={e=>setEditEnv(v=>({...v,budget:e.target.value}))}/>
         <Btn color={color} onClick={saveEnvEdit} style={{width:"100%"}}>Save</Btn>
       </Modal>}
 
@@ -493,6 +501,9 @@ function BanksSection({banks,setBanks,tags}){
   const[quickTxBank,setQuickTxBank]=useState(null);
   const[quickTxEnvId,setQuickTxEnvId]=useState("");
   const[quickTx,setQuickTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+  const[reserveOn,setReserveOn]=useState(false);
+  const[reserveBankId,setReserveBankId]=useState("");
+  const[reserveEnvId,setReserveEnvId]=useState("");
   const[quickTxErr,setQuickTxErr]=useState("");
   const[bankName,setBankName]=useState("");
   const[bankCurrency,setBankCurrency]=useState("PHP");
@@ -562,11 +573,34 @@ function BanksSection({banks,setBanks,tags}){
     if(!quickTx.amount||parseFloat(quickTx.amount)<=0){setQuickTxErr("Please enter a valid amount greater than 0.");return;}
     const amt=parseFloat(quickTx.amount);
     const isIncome=quickTx.type==="income";
-    const newTx={id:Date.now(),...quickTx,amount:amt};
     const bankId=quickTxBank.id;
-    setBanks(bs=>bs.map(b=>b.id!==bankId?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==quickTxEnvId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    if(reserveOn&&!isIncome){
+      if(!reserveBankId||!reserveEnvId){setQuickTxErr("Please select where to reserve this amount.");return;}
+      if(String(reserveBankId)===String(bankId)&&String(reserveEnvId)===String(quickTxEnvId)){setQuickTxErr("Reserve envelope must differ from the spending envelope.");return;}
+      const reserveBankObj=banks.find(b=>String(b.id)===String(reserveBankId));
+      if(reserveBankObj&&reserveBankObj.currency!==quickTxBank.currency){setQuickTxErr(`Reserve envelope must be in ${quickTxBank.currency} — the selected one is ${reserveBankObj.currency}.`);return;}
+      const newTx={id:Date.now(),...quickTx,amount:amt};
+      const reserveTx={id:Date.now()+1,type:"income",desc:`Reserved: ${quickTx.desc}`,amount:amt,tag:"Transfer",note:"",date:quickTx.date};
+      const sameBank=String(bankId)===String(reserveBankId);
+      setBanks(bs=>bs.map(b=>{
+        if(sameBank&&String(b.id)===String(bankId)){
+          return{...b,envelopes:b.envelopes.map(e=>{
+            if(String(e.id)===String(quickTxEnvId))return{...e,balance:e.balance-amt,transactions:[newTx,...e.transactions]};
+            if(String(e.id)===String(reserveEnvId))return{...e,balance:e.balance+amt,transactions:[reserveTx,...e.transactions]};
+            return e;
+          })};
+        }
+        if(!sameBank&&String(b.id)===String(bankId))return{...b,balance:b.balance-amt,envelopes:b.envelopes.map(e=>String(e.id)===String(quickTxEnvId)?{...e,balance:e.balance-amt,transactions:[newTx,...e.transactions]}:e)};
+        if(!sameBank&&String(b.id)===String(reserveBankId))return{...b,balance:b.balance+amt,envelopes:b.envelopes.map(e=>String(e.id)===String(reserveEnvId)?{...e,balance:e.balance+amt,transactions:[reserveTx,...e.transactions]}:e)};
+        return b;
+      }));
+    }else{
+      const newTx={id:Date.now(),...quickTx,amount:amt};
+      setBanks(bs=>bs.map(b=>b.id!==bankId?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==quickTxEnvId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    }
     setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
+    setReserveOn(false);setReserveBankId("");setReserveEnvId("");
   };
   const historyTxsForBank=bank=>bank.envelopes.flatMap(e=>e.transactions.map(t=>({...t,bankId:bank.id,bankName:bank.name,bankCurrency:bank.currency,envId:e.id,envName:e.name,envEmoji:e.isUnalloc?"📂":(e.emoji||"🗂️")}))).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
   const historyTxsAll=()=>banks.flatMap(b=>historyTxsForBank(b)).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
@@ -655,7 +689,7 @@ function BanksSection({banks,setBanks,tags}){
         );
       })}
       {transferBank&&<TransferModal bank={transferBank} allBanks={banks} onClose={()=>setTransferBank(null)} onTransfer={doTransfer}/>}
-      {quickTxBank&&<Modal title={`Add Transaction → ${quickTxBank.name}`} onClose={()=>{setQuickTxBank(null);setQuickTxErr("");}} isDirty={!!quickTx.desc||!!quickTx.amount}>
+      {quickTxBank&&<Modal title={`Add Transaction → ${quickTxBank.name}`} onClose={()=>{setQuickTxBank(null);setQuickTxErr("");setReserveOn(false);setReserveBankId("");setReserveEnvId("");}} isDirty={!!quickTx.desc||!!quickTx.amount}>
         <Sel label="Envelope" value={quickTxEnvId} onChange={e=>{setQuickTxEnvId(e.target.value);setQuickTxErr("");}}>
           {quickTxBank.envelopes.map(e=><option key={e.id} value={e.id}>{e.isUnalloc?"📂":(e.emoji||"🗂️")} {e.name}</option>)}
         </Sel>
@@ -669,6 +703,25 @@ function BanksSection({banks,setBanks,tags}){
           <option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}
         </Sel>
         <Inp label="Date" type="date" value={quickTx.date} onChange={e=>setQuickTx(x=>({...x,date:e.target.value}))}/>
+        {quickTx.type==="expense"&&<div style={{background:T.card2,borderRadius:8,padding:10,marginBottom:12}}>
+          <label style={{display:"flex",alignItems:"center",gap:8,fontSize:13,color:T.text,cursor:"pointer"}}>
+            <input type="checkbox" checked={reserveOn} onChange={e=>{setReserveOn(e.target.checked);setQuickTxErr("");}}/>
+            💳 Paid by credit card — reserve this amount
+          </label>
+          {reserveOn&&<div style={{marginTop:10}}>
+            <div style={{fontSize:11,color:T.subtext,marginBottom:4}}>Reserve into</div>
+            <div style={{display:"flex",gap:8}}>
+              <select value={reserveBankId} onChange={e=>{setReserveBankId(e.target.value);setReserveEnvId("");setQuickTxErr("");}} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
+                <option value="">Select bank</option>
+                {banks.map(b=><option key={b.id} value={String(b.id)}>{b.name} ({b.currency})</option>)}
+              </select>
+              <select value={reserveEnvId} onChange={e=>{setReserveEnvId(e.target.value);setQuickTxErr("");}} style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}>
+                <option value="">Select envelope</option>
+                {(banks.find(b=>String(b.id)===String(reserveBankId))?.envelopes||[]).map(e=><option key={e.id} value={e.id}>{e.name}</option>)}
+              </select>
+            </div>
+          </div>}
+        </div>}
         <Btn color={bankColor(quickTxBank)} onClick={submitQuickTx} style={{width:"100%"}}>Add Transaction</Btn>
       </Modal>}
       {showBankHist&&(()=>{
