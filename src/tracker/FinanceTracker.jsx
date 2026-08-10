@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.7.0";
+const VERSION = "v5.7.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -200,6 +200,11 @@ function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0)
 function envelopeMonthSpend(env){
   const monthKey=localDateStr().slice(0,7);
   return(env.transactions||[]).filter(t=>t.type==="expense"&&t.date&&t.date.slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
+}
+function daysLeftInMonth(){
+  const now=new Date();
+  const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
+  return lastDay-now.getDate()+1;
 }
 
 function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
@@ -419,7 +424,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
                   {!e.isUnalloc&&<button onClick={()=>setEditEnv({id:e.id,name:e.name,emoji:e.emoji||"🗂️",goal:e.goal||"",budget:e.budget||""})} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:12,padding:0,flexShrink:0}}>✏️</button>}
                 </div>
                 {e.goal&&!e.isUnalloc&&(()=>{const pct=Math.min(100,Math.round((e.balance/e.goal)*100));const rem=e.goal-e.balance;return(<div style={{marginTop:4}}><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:pct>=100?"#10B981":color,borderRadius:99}}/></div><div style={{fontSize:10,color:pct>=100?"#10B981":T.faint,marginTop:2}}>{pct}%{pct>=100?" ✓":<span style={{marginLeft:4,color:T.subtext}}>· {sym(currency)}{fmtNum(rem)} left</span>}</div></div>);})()}
-                {e.budget&&!e.isUnalloc&&(()=>{const spent=envelopeMonthSpend(e);const pct=Math.min(100,Math.round((spent/e.budget)*100));const over=spent>e.budget;const rem=e.budget-spent;return(<div style={{marginTop:4}}><div style={{fontSize:10,color:T.faint,marginBottom:1}}>Budget this month</div><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:over?"#ef4444":"#F59E0B",borderRadius:99}}/></div><div style={{fontSize:10,color:over?"#ef4444":T.faint,marginTop:2}}>{sym(currency)}{fmtNum(spent)} / {sym(currency)}{fmtNum(e.budget)}{over?` · ${sym(currency)}${fmtNum(Math.abs(rem))} over`:` · ${sym(currency)}${fmtNum(rem)} left`}</div></div>);})()}
+                {e.budget&&!e.isUnalloc&&(()=>{const spent=envelopeMonthSpend(e);const pct=Math.min(100,Math.round((spent/e.budget)*100));const over=spent>e.budget;const rem=e.budget-spent;const days=daysLeftInMonth();const perDay=!over&&days>0?rem/days:null;return(<div style={{marginTop:4}}><div style={{fontSize:10,color:T.faint,marginBottom:1}}>Budget this month</div><div style={{background:T.card,borderRadius:99,height:5,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:over?"#ef4444":"#F59E0B",borderRadius:99}}/></div><div style={{fontSize:10,color:over?"#ef4444":T.faint,marginTop:2}}>{sym(currency)}{fmtNum(spent)} / {sym(currency)}{fmtNum(e.budget)}{over?` · ${sym(currency)}${fmtNum(Math.abs(rem))} over`:` · ${sym(currency)}${fmtNum(rem)} left`}</div>{perDay!==null&&<div style={{fontSize:10,color:T.faint,marginTop:1}}>{sym(currency)}{fmtNum(perDay)}/day · {sym(currency)}{fmtNum(perDay*7)}/week · {days} day{days!==1?"s":""} left</div>}</div>);})()}
                 {!e.goal&&!e.budget&&<div style={{fontSize:11,color:T.faint}}>{e.transactions.length} tx</div>}
               </div>
             </div>
