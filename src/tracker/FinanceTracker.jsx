@@ -601,7 +601,7 @@ function BanksSection({banks,setBanks,tags}){
       }));
     }else{
       const newTx={id:Date.now(),...quickTx,amount:amt};
-      setBanks(bs=>bs.map(b=>b.id!==bankId?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==quickTxEnvId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+      setBanks(bs=>bs.map(b=>String(b.id)!==String(bankId)?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>String(e.id)!==String(quickTxEnvId)?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
     }
     setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
@@ -1285,7 +1285,7 @@ function QuickAdd({banks,setBanks,tags}){
     if(!tx.amount||parseFloat(tx.amount)<=0){setErr("Please enter a valid amount.");return;}
     const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";
     const newTx={id:Date.now(),...tx,amount:amt};
-    setBanks(bs=>bs.map(b=>b.id!==bank.id?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    setBanks(bs=>bs.map(b=>String(b.id)!==String(bank.id)?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>String(e.id)!==String(envId)?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
     setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setErr("");setOpen(false);
   };
