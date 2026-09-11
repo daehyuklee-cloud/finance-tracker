@@ -10,10 +10,11 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.7.3";
+const VERSION = "v5.8.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+const r2 = n => Math.round((n+Number.EPSILON)*100)/100; // round to the cent to kill float drift from repeated balance +/-
 const SHEET_COLS=8;
 const SHEET_INITIAL_ROWS=10;
 const SHEET_MAX_ROWS=40;
@@ -357,7 +358,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   const addEnvelope=()=>{
     if(!envName.trim())return;
     const amt=parseFloat(envBal)||0;
-    updateBank(b=>({...b,balance:b.balance+amt,envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,budget:parseFloat(envBudget)||null,transactions:[]}]}));
+    updateBank(b=>({...b,balance:r2(b.balance+amt),envelopes:[...b.envelopes,{id:Date.now(),name:envName.trim(),emoji:envEmoji,balance:amt,goal:parseFloat(envGoal)||null,budget:parseFloat(envBudget)||null,transactions:[]}]}));
     setEnvName("");setEnvBal("");setEnvGoal("");setEnvBudget("");setEnvEmoji("🗂️");setShowAdd(false);
   };
   const saveEnvEdit=()=>{
@@ -365,14 +366,14 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
     setEditEnv(null);
   };
   const delEnvelope=envId=>{
-    updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);return{...b,balance:b.balance-(env?.balance||0),envelopes:b.envelopes.filter(e=>e.id!==envId)};});
+    updateBank(b=>{const env=b.envelopes.find(e=>e.id===envId);return{...b,balance:r2(b.balance-(env?.balance||0)),envelopes:b.envelopes.filter(e=>e.id!==envId)};});
     setConfirmDelEnv(null);
   };
   const addTx=()=>{
     const amt=parseFloat(tx.amount);
     const isIncome=tx.type==="income";
     const newTx={id:Date.now(),...tx,amount:amt};
-    updateBank(b=>({...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    updateBank(b=>({...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
     setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setShowTx(null);
   };
@@ -383,7 +384,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
       const oldD=old.type==="income"?old.amount:-old.amount;
       const newD=updated.type==="income"?updated.amount:-updated.amount;
       const diff=newD-oldD;
-      return{...b,balance:b.balance+diff,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+diff,transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};
+      return{...b,balance:r2(b.balance+diff),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:r2(e.balance+diff),transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};
     });
     setEditTx(null);
   };
@@ -393,7 +394,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
       const t=env?.transactions.find(x=>x.id===txId);
       if(!t)return b;
       const delta=t.type==="income"?-t.amount:t.amount;
-      return{...b,balance:b.balance+delta,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+delta,transactions:e.transactions.filter(x=>x.id!==txId)})};
+      return{...b,balance:r2(b.balance+delta),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:r2(e.balance+delta),transactions:e.transactions.filter(x=>x.id!==txId)})};
     });
     setConfirmDelTx(null);
   };
@@ -530,7 +531,7 @@ function BanksSection({banks,setBanks,tags}){
     setBanks(bs=>bs.map(b=>{
       if(b.id!==editBank.id)return b;
       let envelopes=b.envelopes;
-      if(!isNaN(newTotal)&&newTotal!==bankTotal(b)){const diff=newTotal-bankTotal(b);envelopes=b.envelopes.map(e=>e.id===UNALLOC_ID?{...e,balance:e.balance+diff}:e);}
+      if(!isNaN(newTotal)&&newTotal!==bankTotal(b)){const diff=newTotal-bankTotal(b);envelopes=b.envelopes.map(e=>e.id===UNALLOC_ID?{...e,balance:r2(e.balance+diff)}:e);}
       return{...b,name:editBank.name,color:editBank.color,envelopes};
     }));
     setEditBank(null);
@@ -540,7 +541,7 @@ function BanksSection({banks,setBanks,tags}){
     const date=localDateStr();
     if(fromExternal){
       const destTx={id:Date.now(),type:"income",desc:"Received from External account",amount:received,tag:"Transfer",note:"",date};
-      setBanks(bs=>bs.map(b=>String(b.id)===String(destBank.id)?{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)}:b));
+      setBanks(bs=>bs.map(b=>String(b.id)===String(destBank.id)?{...b,balance:r2(b.balance+received),envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:r2(e.balance+received),transactions:[destTx,...e.transactions]}:e)}:b));
       setTransferBank(null);
       return;
     }
@@ -548,7 +549,7 @@ function BanksSection({banks,setBanks,tags}){
       const totalDeducted=amt+fee;
       const srcTx={id:Date.now(),type:"expense",desc:`Sent to External account${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
       const srcBankId=transferBank.id;
-      setBanks(bs=>bs.map(b=>String(b.id)===String(srcBankId)?{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)}:b));
+      setBanks(bs=>bs.map(b=>String(b.id)===String(srcBankId)?{...b,balance:r2(b.balance-totalDeducted),envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:r2(e.balance-totalDeducted),transactions:[srcTx,...e.transactions]}:e)}:b));
       setTransferBank(null);
       return;
     }
@@ -560,14 +561,14 @@ function BanksSection({banks,setBanks,tags}){
     const sameBank=String(srcBankId)===String(destBankId);
     setBanks(bs=>bs.map(b=>{
       if(sameBank&&String(b.id)===String(srcBankId)){
-        return{...b,balance:b.balance-totalDeducted+received,envelopes:b.envelopes.map(e=>{
-          if(String(e.id)===String(srcEnv.id))return{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]};
-          if(String(e.id)===String(destEnv.id))return{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]};
+        return{...b,balance:r2(b.balance-totalDeducted+received),envelopes:b.envelopes.map(e=>{
+          if(String(e.id)===String(srcEnv.id))return{...e,balance:r2(e.balance-totalDeducted),transactions:[srcTx,...e.transactions]};
+          if(String(e.id)===String(destEnv.id))return{...e,balance:r2(e.balance+received),transactions:[destTx,...e.transactions]};
           return e;
         })};
       }
-      if(!sameBank&&String(b.id)===String(srcBankId))return{...b,balance:b.balance-totalDeducted,envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:e.balance-totalDeducted,transactions:[srcTx,...e.transactions]}:e)};
-      if(!sameBank&&String(b.id)===String(destBankId))return{...b,balance:b.balance+received,envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:e.balance+received,transactions:[destTx,...e.transactions]}:e)};
+      if(!sameBank&&String(b.id)===String(srcBankId))return{...b,balance:r2(b.balance-totalDeducted),envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:r2(e.balance-totalDeducted),transactions:[srcTx,...e.transactions]}:e)};
+      if(!sameBank&&String(b.id)===String(destBankId))return{...b,balance:r2(b.balance+received),envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:r2(e.balance+received),transactions:[destTx,...e.transactions]}:e)};
       return b;
     }));
     setTransferBank(null);
@@ -590,18 +591,18 @@ function BanksSection({banks,setBanks,tags}){
       setBanks(bs=>bs.map(b=>{
         if(sameBank&&String(b.id)===String(bankId)){
           return{...b,envelopes:b.envelopes.map(e=>{
-            if(String(e.id)===String(quickTxEnvId))return{...e,balance:e.balance-amt,transactions:[newTx,...e.transactions]};
-            if(String(e.id)===String(reserveEnvId))return{...e,balance:e.balance+amt,transactions:[reserveTx,...e.transactions]};
+            if(String(e.id)===String(quickTxEnvId))return{...e,balance:r2(e.balance-amt),transactions:[newTx,...e.transactions]};
+            if(String(e.id)===String(reserveEnvId))return{...e,balance:r2(e.balance+amt),transactions:[reserveTx,...e.transactions]};
             return e;
           })};
         }
-        if(!sameBank&&String(b.id)===String(bankId))return{...b,balance:b.balance-amt,envelopes:b.envelopes.map(e=>String(e.id)===String(quickTxEnvId)?{...e,balance:e.balance-amt,transactions:[newTx,...e.transactions]}:e)};
-        if(!sameBank&&String(b.id)===String(reserveBankId))return{...b,balance:b.balance+amt,envelopes:b.envelopes.map(e=>String(e.id)===String(reserveEnvId)?{...e,balance:e.balance+amt,transactions:[reserveTx,...e.transactions]}:e)};
+        if(!sameBank&&String(b.id)===String(bankId))return{...b,balance:r2(b.balance-amt),envelopes:b.envelopes.map(e=>String(e.id)===String(quickTxEnvId)?{...e,balance:r2(e.balance-amt),transactions:[newTx,...e.transactions]}:e)};
+        if(!sameBank&&String(b.id)===String(reserveBankId))return{...b,balance:r2(b.balance+amt),envelopes:b.envelopes.map(e=>String(e.id)===String(reserveEnvId)?{...e,balance:r2(e.balance+amt),transactions:[reserveTx,...e.transactions]}:e)};
         return b;
       }));
     }else{
       const newTx={id:Date.now(),...quickTx,amount:amt};
-      setBanks(bs=>bs.map(b=>String(b.id)!==String(bankId)?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>String(e.id)!==String(quickTxEnvId)?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+      setBanks(bs=>bs.map(b=>String(b.id)!==String(bankId)?b:{...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>String(e.id)!==String(quickTxEnvId)?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
     }
     setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
@@ -618,7 +619,7 @@ function BanksSection({banks,setBanks,tags}){
       const oldD=old.type==="income"?old.amount:-old.amount;
       const newD=updated.type==="income"?updated.amount:-updated.amount;
       const diff=newD-oldD;
-      return{...b,balance:b.balance+diff,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+diff,transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};
+      return{...b,balance:r2(b.balance+diff),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:r2(e.balance+diff),transactions:e.transactions.map(t=>t.id===updated.id?updated:t)})};
     }));
     setEditHistTx(null);
   };
@@ -630,7 +631,7 @@ function BanksSection({banks,setBanks,tags}){
       const t=env?.transactions.find(x=>x.id===txId);
       if(!t)return b;
       const delta=t.type==="income"?-t.amount:t.amount;
-      return{...b,balance:b.balance+delta,envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:e.balance+delta,transactions:e.transactions.filter(x=>x.id!==txId)})};
+      return{...b,balance:r2(b.balance+delta),envelopes:b.envelopes.map(e=>e.id!==envId?e:{...e,balance:r2(e.balance+delta),transactions:e.transactions.filter(x=>x.id!==txId)})};
     }));
     setConfirmDelHistTx(null);
   };
@@ -1285,7 +1286,7 @@ function QuickAdd({banks,setBanks,tags}){
     if(!tx.amount||parseFloat(tx.amount)<=0){setErr("Please enter a valid amount.");return;}
     const amt=parseFloat(tx.amount);const isIncome=tx.type==="income";
     const newTx={id:Date.now(),...tx,amount:amt};
-    setBanks(bs=>bs.map(b=>String(b.id)!==String(bank.id)?b:{...b,balance:b.balance+(isIncome?amt:-amt),envelopes:b.envelopes.map(e=>String(e.id)!==String(envId)?e:{...e,balance:e.balance+(isIncome?amt:-amt),transactions:[newTx,...e.transactions]})}));
+    setBanks(bs=>bs.map(b=>String(b.id)!==String(bank.id)?b:{...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>String(e.id)!==String(envId)?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
     setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setErr("");setOpen(false);
   };
