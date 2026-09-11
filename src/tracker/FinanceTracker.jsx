@@ -10,11 +10,12 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.8.0";
+const VERSION = "v5.8.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const r2 = n => Math.round((n+Number.EPSILON)*100)/100; // round to the cent to kill float drift from repeated balance +/-
+const normalizeBanks = banks => (banks||[]).map(b=>({...b,balance:r2(b.balance||0),envelopes:(b.envelopes||[]).map(e=>({...e,balance:r2(e.balance||0)}))})); // one-time snap for balances carrying pre-fix float dust
 const SHEET_COLS=8;
 const SHEET_INITIAL_ROWS=10;
 const SHEET_MAX_ROWS=40;
@@ -1536,8 +1537,8 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
       setSyncStatus("loading");
       const data=await loadData(userId);
       if(data){
-        if(data.banks)setBanks(data.banks);
-        else if(data.phpBanks||data.sgdBanks)setBanks([...(data.phpBanks||[]).map(b=>({...b,currency:"PHP"})),...(data.sgdBanks||[]).map(b=>({...b,currency:"SGD"}))]);
+        if(data.banks)setBanks(normalizeBanks(data.banks));
+        else if(data.phpBanks||data.sgdBanks)setBanks(normalizeBanks([...(data.phpBanks||[]).map(b=>({...b,currency:"PHP"})),...(data.sgdBanks||[]).map(b=>({...b,currency:"SGD"}))]));
         let inv=[];
         if(data.investments){inv=data.investments.map(i=>{if(i.items)return i;const v=parseFloat(i.value)||0;return{id:i.id||Date.now()+Math.random(),name:i.name,bucket:i.bucket||"Stocks",items:[{id:Date.now()+Math.random(),name:i.name,currency:i.currency||"USD",cost:i.cost||0,value:v,notes:i.notes||"",history:i.history||[{value:v,date:new Date().toISOString()}]}]};});}
         if(data.crypto){const cryptoItems=data.crypto.map(c=>({id:(c.id||Date.now())+Math.random(),name:c.coin,currency:c.currency||"USD",cost:0,value:parseFloat(c.value)||0,notes:c.notes||`${c.amount} tokens`,history:[{value:parseFloat(c.value)||0,date:new Date().toISOString()}]}));if(cryptoItems.length)inv.push({id:Date.now()+Math.random(),name:"Crypto Portfolio",bucket:"Crypto",items:cryptoItems});}
@@ -1597,7 +1598,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
   },[userId]);
 
   const importBackup=p=>{
-    if(p.banks)setBanks(p.banks);
+    if(p.banks)setBanks(normalizeBanks(p.banks));
     if(p.investments)setInvestments(p.investments);
     if(p.tags)setTags(p.tags);
     if(Array.isArray(p.notes))setNotes(p.notes);
