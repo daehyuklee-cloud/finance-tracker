@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.7.2";
+const VERSION = "v5.7.3";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -282,7 +282,7 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
       srcEnv=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
       if(!srcEnv){setErr("Please select a source envelope.");return;}
       if(!toExternal&&String(toBank)===String(bank.id)&&String(fromEnvId)===String(toEnvId)){setErr("Source and destination must differ.");return;}
-      if(srcEnv.balance<total){setErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
+      if(srcEnv.balance<total-0.005){setErr(`Insufficient balance. Need ${sym(bank.currency)}${fmtNum(total)} but source has ${sym(bank.currency)}${fmtNum(srcEnv.balance)}.`);return;}
     }
     if(!toExternal){
       destEnv=destEnvs.find(e=>String(e.id)===String(toEnvId));
