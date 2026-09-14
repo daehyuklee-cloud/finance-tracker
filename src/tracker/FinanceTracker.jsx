@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.14.0";
+const VERSION = "v5.14.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -298,10 +298,20 @@ function computeObservations(banks){
             text:`${sym(b.currency)}${fmtNum(e.balance)} in ${e.isUnalloc?`${b.name}'s Unallocated`:`"${e.name}" (${b.name})`} hasn't moved in 60+ days.`});
         }
       }
-      if(e.budget&&dayOfMonth>=5){
-        const spent=envelopeMonthSpend(e);
-        const projected=(spent/dayOfMonth)*daysInMonth;
-        if(projected>e.budget*1.1){
+      // Wait until at least a third of the month has passed, and cap the
+      // Only project a pace for a category with an actual recurring pattern
+      // this month (spending on 2+ different days) — extrapolating a single
+      // lump payment (a one-time fee, a yearly subscription) as if it
+      // repeats every remaining day produces a nonsense number. Also cap
+      // the extrapolation multiplier itself so early-month noise doesn't
+      // get amplified into a dramatic-looking percentage.
+      const monthExpenses=e.transactions.filter(t=>t.type==="expense"&&t.date?.slice(0,7)===monthKey);
+      const patternDays=new Set(monthExpenses.map(t=>t.date)).size;
+      if(e.budget&&patternDays>=2&&dayOfMonth>=Math.max(10,Math.round(daysInMonth/3))){
+        const spent=monthExpenses.reduce((s,t)=>s+t.amount,0);
+        const multiplier=Math.min(daysInMonth/dayOfMonth,2.5);
+        const projected=spent*multiplier;
+        if(projected>e.budget*1.25){
           const overPct=Math.round(((projected-e.budget)/e.budget)*100);
           obs.push({id:`budget_${b.id}_${e.id}`,icon:"⚠️",tone:"warn",
             text:`On pace to spend ${sym(b.currency)}${fmtNum(projected)} in "${e.name}" this month — ${overPct}% over your ${sym(b.currency)}${fmtNum(e.budget)} budget.`});
@@ -1376,8 +1386,7 @@ function AnalyticsSection({banks,prefs,setPrefs}){
         </div>
 
         <div style={{background:T.card,borderRadius:12,padding:16,marginTop:14,border:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Observations</div>
-          <div style={{fontSize:11,color:T.faint,marginBottom:12}}>Plain rule-based checks over your data — no AI, nothing sent anywhere</div>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:12}}>Observations</div>
           {allObservations.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>Nothing to flag right now.</div>}
           {allObservations.map((o,i)=>(
             <div key={o.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
