@@ -12,6 +12,37 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>acountee</title>
+    <style>
+      button{transition:transform .12s ease,opacity .12s ease,background-color .15s ease,border-color .15s ease;min-height:32px;min-width:32px;}
+      button:active:not(:disabled){transform:scale(0.96);}
+      button:disabled{transition:none;}
+      input,select,textarea{transition:border-color .15s ease,background-color .15s ease;}
+      body,#root{transition:background-color .2s ease,color .2s ease;}
+      .modal-backdrop{animation:modal-fade-in .15s ease;}
+      .modal-backdrop.closing{animation:modal-fade-out .12s ease forwards;}
+      .modal-panel{animation:modal-pop-in .16s cubic-bezier(.2,.8,.3,1);}
+      .modal-backdrop.closing .modal-panel{animation:modal-pop-out .12s ease forwards;}
+      @keyframes modal-fade-in{from{opacity:0}to{opacity:1}}
+      @keyframes modal-fade-out{from{opacity:1}to{opacity:0}}
+      @keyframes modal-pop-in{from{opacity:0;transform:scale(.96) translateY(4px)}to{opacity:1;transform:scale(1) translateY(0)}}
+      @keyframes modal-pop-out{from{opacity:1;transform:scale(1)}to{opacity:0;transform:scale(.97)}}
+      .sync-chip-enter{animation:sync-fade .2s ease;}
+      @keyframes sync-fade{from{opacity:0;transform:translateY(-2px)}to{opacity:1;transform:translateY(0)}}
+      .row-enter{animation:row-slide-in .22s ease;}
+      @keyframes row-slide-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
+      .flash-update{animation:flash-bg .6s ease;}
+      @keyframes flash-bg{0%{background-color:rgba(16,185,129,0.18)}100%{background-color:transparent}}
+      .toast-enter{animation:toast-in .18s ease;}
+      @keyframes toast-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+      .skeleton{position:relative;overflow:hidden;background:currentColor;opacity:0.08;border-radius:8px;}
+      .skeleton::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,0.25),transparent);animation:skeleton-shimmer 1.3s infinite;}
+      @keyframes skeleton-shimmer{100%{transform:translateX(100%)}}
+      @media (prefers-reduced-motion: reduce){
+        button,input,select,textarea,body,#root{transition:none!important;}
+        button:active:not(:disabled){transform:none!important;}
+        .modal-backdrop,.modal-panel,.modal-backdrop.closing,.modal-backdrop.closing .modal-panel,.sync-chip-enter,.row-enter,.flash-update,.skeleton::after,.toast-enter{animation:none!important;}
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

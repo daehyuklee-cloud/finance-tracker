@@ -10,12 +10,49 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.8.1";
+const VERSION = "v5.9.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const r2 = n => Math.round((n+Number.EPSILON)*100)/100; // round to the cent to kill float drift from repeated balance +/-
 const normalizeBanks = banks => (banks||[]).map(b=>({...b,balance:r2(b.balance||0),envelopes:(b.envelopes||[]).map(e=>({...e,balance:r2(e.balance||0)}))})); // one-time snap for balances carrying pre-fix float dust
+
+// ── Toast: lightweight global pub/sub so any component can surface a message
+// without prop-drilling a callback through the whole tree. ──
+let toastListeners=[];
+function toast(type,msg){toastListeners.forEach(fn=>fn({id:Date.now()+Math.random(),type,msg}));}
+function DashboardSkeleton(){
+  return(
+    <div>
+      <div className="skeleton" style={{height:80,marginBottom:16}}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
+        <div className="skeleton" style={{height:74}}/>
+        <div className="skeleton" style={{height:74}}/>
+      </div>
+      <div className="skeleton" style={{height:52,marginBottom:8}}/>
+      <div className="skeleton" style={{height:52,marginBottom:8}}/>
+      <div className="skeleton" style={{height:52}}/>
+    </div>
+  );
+}
+function ToastHost(){
+  const[items,setItems]=useState([]);
+  useEffect(()=>{
+    const onToast=t=>{setItems(is=>[...is,t]);setTimeout(()=>setItems(is=>is.filter(x=>x.id!==t.id)),3200);};
+    toastListeners.push(onToast);
+    return()=>{toastListeners=toastListeners.filter(f=>f!==onToast);};
+  },[]);
+  if(!items.length)return null;
+  return(
+    <div style={{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:500,display:"flex",flexDirection:"column",gap:8,alignItems:"center",pointerEvents:"none"}}>
+      {items.map(t=>(
+        <div key={t.id} className="toast-enter" style={{background:t.type==="error"?"#ef4444":t.type==="success"?"#10B981":T.text,color:t.type?"#fff":T.bg,padding:"10px 16px",borderRadius:10,fontSize:13,fontWeight:600,boxShadow:"0 4px 16px rgba(0,0,0,0.25)",maxWidth:"90vw",pointerEvents:"auto"}}>
+          {t.type==="error"?"⚠️ ":t.type==="success"?"✓ ":""}{t.msg}
+        </div>
+      ))}
+    </div>
+  );
+}
 const SHEET_COLS=8;
 const SHEET_INITIAL_ROWS=10;
 const SHEET_MAX_ROWS=40;
@@ -142,24 +179,32 @@ function useUndoable(init){
 }
 
 function Modal({title,onClose,children,isDirty=false,zIndex=100}){
-  const requestClose=()=>{if(isDirty){if(window.confirm("You have unsaved changes. Close anyway?"))onClose();}else onClose();};
+  const[askClose,setAskClose]=useState(false);
+  const[closing,setClosing]=useState(false);
+  const doClose=()=>{setClosing(true);setTimeout(onClose,110);};
+  const requestClose=()=>{if(isDirty)setAskClose(true);else doClose();};
+  if(askClose){
+    return(
+      <ConfirmModal message="You have unsaved changes." detail="Close anyway? Your edits in this form will be lost." confirmLabel="Close anyway" onConfirm={doClose} onClose={()=>setAskClose(false)} zIndex={zIndex+50}/>
+    );
+  }
   return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={requestClose}>
-      <div onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:12,padding:24,minWidth:340,maxWidth:480,width:"90%",maxHeight:"85vh",overflowY:"auto"}}>
+    <div className={`modal-backdrop${closing?" closing":""}`} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.6)",zIndex,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={requestClose}>
+      <div className="modal-panel" onClick={e=>e.stopPropagation()} style={{background:T.card,borderRadius:12,padding:24,minWidth:340,maxWidth:480,width:"90%",maxHeight:"85vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <strong style={{fontSize:16,color:T.text}}>{title}</strong>
-          <button onClick={requestClose} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:22,lineHeight:1}}>×</button>
+          <button onClick={requestClose} style={{background:"none",border:"none",color:T.subtext,cursor:"pointer",fontSize:22,lineHeight:1,padding:8,minWidth:38,minHeight:38}}>×</button>
         </div>
         {children}
       </div>
     </div>
   );
 }
-function ConfirmModal({message,detail,confirmLabel="Delete",requireDel,onConfirm,onClose}){
+function ConfirmModal({message,detail,confirmLabel="Delete",requireDel,onConfirm,onClose,zIndex=200}){
   const[val,setVal]=useState("");
   const ok=requireDel?val==="DEL":true;
   return(
-    <Modal title="Please Confirm" onClose={onClose} isDirty={false} zIndex={200}>
+    <Modal title="Please Confirm" onClose={onClose} isDirty={false} zIndex={zIndex}>
       <p style={{color:T.text,fontSize:14,marginBottom:8}}>{message}</p>
       {detail&&<p style={{color:T.subtext,fontSize:13,marginBottom:12}}>{detail}</p>}
       {requireDel&&<><p style={{color:T.subtext,fontSize:13,marginBottom:8}}>Type <strong style={{color:"#ef4444",letterSpacing:2}}>DEL</strong> to confirm.</p><input value={val} onChange={e=>setVal(e.target.value)} placeholder="Type DEL" autoFocus style={{width:"100%",background:T.input,border:`1px solid ${val==="DEL"?"#ef4444":T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14,boxSizing:"border-box",marginBottom:12,letterSpacing:2}}/></>}
@@ -180,7 +225,7 @@ function SyncBar({status,isOnline}){
   const icons={idle:"☁️",saving:"⏳",saved:"✓",error:"⚠️",loading:"⏳",offline:"📵"};
   const labels={idle:"Ready",saving:"Saving…",saved:"Saved",error:"Failed",loading:"Loading…",offline:"Offline"};
   const s=!isOnline?"offline":status;
-  return<div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:colors[s],padding:"4px 10px",background:T.card,borderRadius:8}}><span>{icons[s]}</span><span>{labels[s]}</span></div>;
+  return<div key={s} className="sync-chip-enter" style={{display:"flex",alignItems:"center",gap:6,fontSize:12,fontWeight:s==="error"?700:400,color:colors[s],padding:"4px 10px",background:T.card,border:s==="error"?"1px solid #ef444466":"1px solid transparent",borderRadius:8}}><span>{icons[s]}</span><span>{labels[s]}</span></div>;
 }
 function EmojiPicker({value,onPick}){return(<div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:12}}>{ENVELOPE_EMOJIS.map(em=>(<button key={em} onClick={()=>onPick(em)} style={{fontSize:18,padding:"4px 6px",borderRadius:8,cursor:"pointer",background:value===em?"#3B82F6":T.input,border:`1px solid ${value===em?"#3B82F6":T.border}`}}>{em}</button>))}</div>);}
 
@@ -377,6 +422,7 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
     updateBank(b=>({...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>e.id!==showTx?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
     setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setShowTx(null);
+    toast("success","Transaction added.");
   };
   const saveTxEdit=(envId,updated)=>{
     updateBank(b=>{
@@ -437,13 +483,13 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
               </div>
               <Btn small color={color} onClick={()=>setShowTx(e.id)}>+</Btn>
               <Btn small outline color={color} onClick={()=>setShowHist(e.id)}>📄</Btn>
-              {!e.isUnalloc&&<Btn small outline color="#ef4444" onClick={()=>setConfirmDelEnv({id:e.id,name:e.name})}>🗑</Btn>}
+              {!e.isUnalloc&&<Btn small outline color="#ef4444" onClick={()=>setConfirmDelEnv({id:e.id,name:e.name,hasContent:e.balance!==0||e.transactions.length>0})}>🗑</Btn>}
             </div>
           </div>
         ))}
       </div>
 
-      {confirmDelEnv&&<ConfirmModal message={`Delete envelope "${confirmDelEnv.name}"?`} detail="This will remove the envelope and its balance from the bank total." requireDel onConfirm={()=>delEnvelope(confirmDelEnv.id)} onClose={()=>setConfirmDelEnv(null)}/>}
+      {confirmDelEnv&&<ConfirmModal message={`Delete envelope "${confirmDelEnv.name}"?`} detail={confirmDelEnv.hasContent?"This will remove the envelope, its balance, and its transaction history from the bank total.":"It's empty — this just removes the envelope itself."} confirmLabel="Delete Envelope" requireDel={confirmDelEnv.hasContent} onConfirm={()=>delEnvelope(confirmDelEnv.id)} onClose={()=>setConfirmDelEnv(null)}/>}
       {confirmDelTx&&<ConfirmModal message={`Delete transaction "${confirmDelTx.desc}"?`} onConfirm={()=>delTx(confirmDelTx.envId,confirmDelTx.txId)} onClose={()=>setConfirmDelTx(null)}/>}
 
       {showAdd&&<Modal title="New Envelope" onClose={()=>setShowAdd(false)} isDirty={!!envName||!!envBal||!!envGoal||!!envBudget}>
@@ -544,6 +590,7 @@ function BanksSection({banks,setBanks,tags}){
       const destTx={id:Date.now(),type:"income",desc:"Received from External account",amount:received,tag:"Transfer",note:"",date};
       setBanks(bs=>bs.map(b=>String(b.id)===String(destBank.id)?{...b,balance:r2(b.balance+received),envelopes:b.envelopes.map(e=>String(e.id)===String(destEnv.id)?{...e,balance:r2(e.balance+received),transactions:[destTx,...e.transactions]}:e)}:b));
       setTransferBank(null);
+      toast("success","Transfer recorded.");
       return;
     }
     if(toExternal){
@@ -552,6 +599,7 @@ function BanksSection({banks,setBanks,tags}){
       const srcBankId=transferBank.id;
       setBanks(bs=>bs.map(b=>String(b.id)===String(srcBankId)?{...b,balance:r2(b.balance-totalDeducted),envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:r2(e.balance-totalDeducted),transactions:[srcTx,...e.transactions]}:e)}:b));
       setTransferBank(null);
+      toast("success","Transfer recorded.");
       return;
     }
     const totalDeducted=amt+fee;
@@ -573,6 +621,7 @@ function BanksSection({banks,setBanks,tags}){
       return b;
     }));
     setTransferBank(null);
+    toast("success","Transfer recorded.");
   };
   const submitQuickTx=()=>{
     if(!quickTxEnvId){setQuickTxErr("Please select an envelope.");return;}
@@ -608,6 +657,7 @@ function BanksSection({banks,setBanks,tags}){
     setQuickTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setQuickTxEnvId("");setQuickTxErr("");setQuickTxBank(null);
     setReserveOn(false);setReserveBankId("");setReserveEnvId("");
+    toast("success","Transaction added.");
   };
   const historyTxsForBank=bank=>bank.envelopes.flatMap(e=>e.transactions.map(t=>({...t,bankId:bank.id,bankName:bank.name,bankCurrency:bank.currency,envId:e.id,envName:e.name,envEmoji:e.isUnalloc?"📂":(e.emoji||"🗂️")}))).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
   const historyTxsAll=()=>banks.flatMap(b=>historyTxsForBank(b)).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id);
@@ -684,7 +734,7 @@ function BanksSection({banks,setBanks,tags}){
                         <Btn small outline color={color} onClick={()=>{setShowBankHist(bk.id);setBankHistVisible(HIST_PAGE_SIZE);}}>📄</Btn>
                         <Btn small outline color={color} onClick={()=>setTransferBank(bk)}>⇄</Btn>
                         <Btn small outline color={color} onClick={()=>toggle(bk.id)}>{expandedSet[bk.id]?"▲":"▼"}</Btn>
-                        <Btn small outline color="#ef4444" onClick={()=>setConfirmDel({id:bk.id,name:bk.name})}>🗑</Btn>
+                        <Btn small outline color="#ef4444" onClick={()=>setConfirmDel({id:bk.id,name:bk.name,hasContent:bankTotal(bk)!==0||bk.envelopes.some(e=>e.transactions.length>0)})}>🗑</Btn>
                       </div>
                     </div>
                     {expandedSet[bk.id]&&<div style={{borderTop:`1px solid ${T.border}`,padding:"12px 16px"}}><EnvelopeView bank={bk} bankId={bk.id} setBanks={setBanks} tags={tags}/></div>}
@@ -793,7 +843,7 @@ function BanksSection({banks,setBanks,tags}){
       })()}
       {editHistTx&&<TxEditModal tx={editHistTx.tx} tags={tags} onSave={saveHistTxEdit} onClose={()=>setEditHistTx(null)}/>}
       {confirmDelHistTx&&<ConfirmModal message={`Delete transaction "${confirmDelHistTx.desc}"?`} onConfirm={delHistTx} onClose={()=>setConfirmDelHistTx(null)}/>}
-      {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail="All its envelopes and transactions will be removed." requireDel onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
+      {confirmDel&&<ConfirmModal message={`Delete bank "${confirmDel.name}"?`} detail={confirmDel.hasContent?"All its envelopes and transaction history will be removed.":"It has no balance or history — this just removes the bank itself."} confirmLabel="Delete Bank" requireDel={confirmDel.hasContent} onConfirm={()=>delBank(confirmDel.id)} onClose={()=>setConfirmDel(null)}/>}
       {showBank&&<Modal title="Add Bank" onClose={()=>setShowBank(false)} isDirty={!!bankName||!!bankBal}>
         <Inp label="Bank Name" value={bankName} onChange={e=>setBankName(e.target.value)} placeholder="e.g. BDO, DBS, Chase"/>
         <Sel label="Currency" value={bankCurrency} onChange={e=>setBankCurrency(e.target.value)}>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c} — {CURRENCY_SYMBOLS[c]}</option>)}</Sel>
@@ -1290,6 +1340,7 @@ function QuickAdd({banks,setBanks,tags}){
     setBanks(bs=>bs.map(b=>String(b.id)!==String(bank.id)?b:{...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>String(e.id)!==String(envId)?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
     setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
     setErr("");setOpen(false);
+    toast("success","Transaction added.");
   };
   return(
     <>
@@ -1446,13 +1497,16 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
 function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,getData,onImport,onSignOut}){
   const[newTag,setNewTag]=useState("");
   const[confirmDelTag,setConfirmDelTag]=useState(null);
+  const[pendingImport,setPendingImport]=useState(null);
+  const[importErr,setImportErr]=useState("");
   const fileRef=useRef(null);const picRef=useRef(null);
   const tagUsage=tag=>banks.reduce((c,b)=>c+b.envelopes.reduce((c2,e)=>c2+e.transactions.filter(t=>t.tag===tag).length,0),0);
   const addTag=()=>{if(!newTag.trim()||tags.includes(newTag.trim()))return;setTags(t=>[...t,newTag.trim()]);setNewTag("");};
   const reqDelTag=tag=>{const u=tagUsage(tag);setConfirmDelTag({tag,count:u});};
   const delTag=tag=>{setTags(t=>t.filter(x=>x!==tag));setConfirmDelTag(null);};
   const exportData=()=>{const blob=new Blob([JSON.stringify(getData(),null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=`acountee-backup-${localDateStr()}.json`;a.click();URL.revokeObjectURL(url);};
-  const importData=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{try{const p=JSON.parse(ev.target.result);if(!confirm("Replace current data with backup?"))return;onImport(p);}catch{alert("Invalid file.");}};reader.readAsText(file);e.target.value="";};
+  const importData=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{try{const p=JSON.parse(ev.target.result);setImportErr("");setPendingImport(p);}catch{setImportErr("That file isn't a valid acountee backup (invalid JSON).");}};reader.readAsText(file);e.target.value="";};
+  const confirmImport=()=>{onImport(pendingImport);setPendingImport(null);toast("success","Backup restored.");};
   const uploadPic=e=>{const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{const img=new Image();img.onload=()=>{const canvas=document.createElement("canvas");const size=128;canvas.width=size;canvas.height=size;const ctx=canvas.getContext("2d");const min=Math.min(img.width,img.height);ctx.drawImage(img,(img.width-min)/2,(img.height-min)/2,min,min,0,0,size,size);setProfile(p=>({...p,photo:canvas.toDataURL("image/jpeg",0.8)}));};img.src=ev.target.result;};reader.readAsDataURL(file);e.target.value="";};
   const displayName=profile.name||googleName||"";
   const displayPhoto=profile.photo||googlePhoto||"";
@@ -1499,6 +1553,7 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
       </div>
       <div style={card}>
         <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:10}}>💾 Backup</div>
+        <FormError msg={importErr}/>
         <div style={{display:"flex",gap:8}}>
           <Btn small outline color="#10B981" onClick={exportData}>⬇ Download Backup</Btn>
           <Btn small outline color="#3B82F6" onClick={()=>fileRef.current?.click()}>⬆ Restore Backup</Btn>
@@ -1509,7 +1564,8 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
         <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:10}}>Account</div>
         <Btn outline color="#ef4444" onClick={onSignOut} style={{width:"100%"}}>Sign out</Btn>
       </div>
-      {confirmDelTag&&<ConfirmModal message={confirmDelTag.count>0?`Tag "${confirmDelTag.tag}" is used by ${confirmDelTag.count} transaction${confirmDelTag.count!==1?"s":""}.`:`Delete tag "${confirmDelTag.tag}"?`} detail={confirmDelTag.count>0?"Those transactions will lose this tag label. Continue?":undefined} confirmLabel="Delete Tag" onConfirm={()=>delTag(confirmDelTag.tag)} onClose={()=>setConfirmDelTag(null)}/>}
+      {confirmDelTag&&<ConfirmModal message={confirmDelTag.count>0?`Tag "${confirmDelTag.tag}" is used by ${confirmDelTag.count} transaction${confirmDelTag.count!==1?"s":""}.`:`Delete tag "${confirmDelTag.tag}"?`} detail={confirmDelTag.count>0?"Those transactions will lose this tag label. Continue?":undefined} confirmLabel="Delete Tag" requireDel={confirmDelTag.count>0} onConfirm={()=>delTag(confirmDelTag.tag)} onClose={()=>setConfirmDelTag(null)}/>}
+      {pendingImport&&<ConfirmModal message="Replace all current data with this backup?" detail="Every bank, envelope, transaction, investment and note currently in the app will be overwritten. This can't be undone." confirmLabel="Replace everything" requireDel onConfirm={confirmImport} onClose={()=>setPendingImport(null)}/>}
     </div>
   );
 }
@@ -1564,8 +1620,10 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
     setSyncStatus("saving");
     if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
     saveTimerRef.current=setTimeout(async()=>{
-      await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
-      setSyncStatus(isOnline?"saved":"offline");
+      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
+      if(result==="synced")setSyncStatus("saved");
+      else if(result==="queued-offline")setSyncStatus("offline");
+      else{setSyncStatus("error");toast("error","Couldn't reach the server — saved on this device and will sync once it's back.");}
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
   },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,userId,isOnline]);
@@ -1593,7 +1651,10 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
-    const unsub=syncWhenOnline(userId,()=>getCurrentPayload.current?.()??{});
+    const unsub=syncWhenOnline(userId,()=>getCurrentPayload.current?.()??{},result=>{
+      if(result==="synced"){setSyncStatus("saved");toast("success","Back online — synced.");}
+      else{setSyncStatus("error");toast("error","Still couldn't sync — will keep retrying.");}
+    });
     return()=>{unsub.then(fn=>fn?.());};
   },[userId]);
 
@@ -1613,6 +1674,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:"system-ui,sans-serif"}}>
+      <ToastHost/>
       <div style={{maxWidth:680,margin:"0 auto",padding:"0 16px 40px"}}>
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
@@ -1628,12 +1690,14 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         <div style={{display:"flex",gap:6,overflowX:"auto",marginBottom:24,paddingBottom:4}}>
           {TABS.map((t,i)=>(<button key={t} onClick={()=>setTab(i)} style={{background:tab===i?TAB_COLORS[i]:T.card,color:tab===i?"#fff":T.subtext,border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap"}}>{t}</button>))}
         </div>
+        {syncStatus==="loading"?<DashboardSkeleton/>:<>
         {tab===0&&<Dashboard banks={banks} setBanks={setBanks} investments={investments} tags={tags} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
         {tab===3&&<AnalyticsSection banks={banks}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
         {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
+        </>}
       </div>
     </div>
   );

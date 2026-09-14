@@ -131,29 +131,38 @@ export async function loadData(userId) {
   return loadLocal(userId);
 }
 
-// Save: save locally always, push to Supabase if online, queue if offline
+// Save: save locally always, push to Supabase if online, queue if offline.
+// Returns a status string so the UI can tell "synced to cloud" apart from
+// "queued because we're offline" apart from "queued because the push failed
+// while online" — that last one used to be silently treated as success.
 export async function saveData(userId, payload) {
   await saveLocal(userId, payload);
   if (navigator.onLine) {
     try {
       await pushToSupabase(userId, payload);
+      return "synced";
     } catch {
       await enqueueSync(userId, payload);
+      return "queued-error";
     }
   } else {
     await enqueueSync(userId, payload);
+    return "queued-offline";
   }
 }
 
 // Call this when the app comes back online
-export async function syncWhenOnline(userId, getCurrentPayload) {
+export async function syncWhenOnline(userId, getCurrentPayload, onResult) {
   const flush = async () => {
     if (!navigator.onLine) return;
     try {
       await flushSyncQueue();
       // also push current state in case queue was empty but data changed
       await pushToSupabase(userId, getCurrentPayload());
-    } catch {}
+      onResult?.("synced");
+    } catch {
+      onResult?.("error");
+    }
   };
   window.addEventListener("online", flush);
   return () => window.removeEventListener("online", flush);
