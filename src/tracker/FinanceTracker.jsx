@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.14.1";
+const VERSION = "v5.14.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1207,6 +1207,7 @@ function AnalyticsSection({banks,prefs,setPrefs}){
   const[to,setTo]=useState(localDateStr());
   const[retryTick,setRetryTick]=useState(0);
   const rateHealthy=useRateHealth();
+  const allObservations=computeObservations(banks);
 
   // Currency-first: pick a native currency and everything computes with zero
   // network dependency (no FX call can ever break it). "All (converted)" is
@@ -1278,10 +1279,18 @@ function AnalyticsSection({banks,prefs,setPrefs}){
   const nwDeltaPct=(netWorthTrend&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
 
   const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
-  const allObservations=computeObservations(banks);
 
   return(
     <div>
+      {allObservations.length>0&&<div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${T.border}`}}>
+        <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:12}}>Observations</div>
+        {allObservations.map((o,i)=>(
+          <div key={o.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+            <div style={{fontSize:16,lineHeight:1.3,flexShrink:0}}>{o.icon}</div>
+            <div style={{fontSize:12.5,color:T.text,lineHeight:1.45}}>{o.text}</div>
+          </div>
+        ))}
+      </div>}
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
         {currencies.map(c=>(
           <button key={c} onClick={()=>setCurrencyTab(c)} style={{background:currencyTab===c?getCurrencyColor(c):T.card,color:currencyTab===c?"#fff":T.subtext,border:`1px solid ${currencyTab===c?getCurrencyColor(c):T.border}`,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:13,fontWeight:600}}>{c}</button>
@@ -1385,16 +1394,6 @@ function AnalyticsSection({banks,prefs,setPrefs}){
           })}
         </div>
 
-        <div style={{background:T.card,borderRadius:12,padding:16,marginTop:14,border:`1px solid ${T.border}`}}>
-          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:12}}>Observations</div>
-          {allObservations.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>Nothing to flag right now.</div>}
-          {allObservations.map((o,i)=>(
-            <div key={o.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
-              <div style={{fontSize:16,lineHeight:1.3,flexShrink:0}}>{o.icon}</div>
-              <div style={{fontSize:12.5,color:T.text,lineHeight:1.45}}>{o.text}</div>
-            </div>
-          ))}
-        </div>
       </>}
     </div>
   );
