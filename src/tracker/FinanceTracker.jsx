@@ -10,8 +10,10 @@ const UNALLOC_ID = "__unallocated__";
 const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
-const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.11.1";
+const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
+const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
+function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
+const VERSION = "v5.12.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1413,46 +1415,78 @@ function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
   );
 }
 
-function ThisMonthCard({banks,overviewCur}){
-  const monthKey=localDateStr().slice(0,7);
-  const monthTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date?.slice(0,7)===monthKey&&t.tag!=="Transfer");
-  const converted=useConvertedItems(monthTx,overviewCur);
-  const loading=converted===null;
-  const income=(converted||[]).filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
-  const expense=(converted||[]).filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const net=income-expense;
+function BanksByCurrency({banks,hideTotals}){
+  const byCurrency={};
+  banks.forEach(b=>{(byCurrency[b.currency]=byCurrency[b.currency]||[]).push(b);});
+  const currencies=Object.keys(byCurrency);
+  if(currencies.length===0)return(
+    <div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your banks</div>
+      <div style={{color:T.faint,textAlign:"center",padding:24,background:T.card,borderRadius:12,border:`1px solid ${T.border}`,fontSize:13}}>No banks yet.</div>
+    </div>
+  );
   return(
-    <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${T.border}`}}>
-      <div style={{fontSize:12,color:T.subtext,marginBottom:10}}>This month, in {overviewCur}</div>
-      {loading&&monthTx.length>0?<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>Converting…</div>:
-      monthTx.length===0?<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>No transactions yet this month.</div>:
-      <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
-        <div><div style={{fontSize:11,color:T.subtext}}>Income</div><div style={{fontSize:17,fontWeight:700,color:"#10B981"}}>{sym(overviewCur)}{fmtNum(income)}</div></div>
-        <div><div style={{fontSize:11,color:T.subtext}}>Expense</div><div style={{fontSize:17,fontWeight:700,color:"#ef4444"}}>{sym(overviewCur)}{fmtNum(expense)}</div></div>
-        <div><div style={{fontSize:11,color:T.subtext}}>Net</div><div style={{fontSize:17,fontWeight:700,color:net>=0?"#10B981":"#ef4444"}}>{sym(overviewCur)}{fmtNum(net)}</div></div>
-      </div>}
+    <div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your banks</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+        {currencies.map(currency=>{
+          const cBanks=byCurrency[currency];
+          const total=cBanks.reduce((s,b)=>s+bankTotal(b),0);
+          const c=getCurrencyColor(currency);
+          return(
+            <div key={currency} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:14}}>
+              <div style={{fontSize:11,color:T.subtext,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}/>{currency} · {cBanks.length} account{cBanks.length!==1?"s":""}</div>
+              <div style={{fontSize:19,fontWeight:700,color:T.text}}>{hideTotals?"••••••":`${sym(currency)}${fmtNum(total)}`}</div>
+              <div style={{fontSize:11,color:T.faint,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cBanks.map(b=>b.name).join(" · ")}</div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
-function RecentActivity({banks}){
-  const recent=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,bankName:b.name,bankColor:bankColor(b),currency:b.currency,envEmoji:e.isUnalloc?"📂":(e.emoji||"🗂️")})))).filter(t=>t.tag!=="Transfer").sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id).slice(0,5);
+function InvestmentsByBucket({investments,overviewCur,hideTotals}){
+  const byBucket={};
+  investments.forEach(inv=>{const b=inv.bucket||"Other";(byBucket[b]=byBucket[b]||[]).push(...(inv.items||[]));});
+  const buckets=INVESTMENT_BUCKETS.filter(b=>byBucket[b]?.length);
+  const allItems=buckets.flatMap(b=>byBucket[b].map(it=>({amount:it.value,currency:it.currency})));
+  const grandTotal=useMultiConvert(allItems,overviewCur);
+  if(buckets.length===0)return(
+    <div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your investments</div>
+      <div style={{color:T.faint,textAlign:"center",padding:24,background:T.card,borderRadius:12,border:`1px solid ${T.border}`,fontSize:13}}>No investments yet.</div>
+    </div>
+  );
   return(
-    <div style={{background:T.card,borderRadius:12,padding:16,border:`1px solid ${T.border}`}}>
-      <div style={{fontSize:12,color:T.subtext,marginBottom:10}}>Recent activity</div>
-      {recent.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>No transactions yet.</div>}
-      {recent.map((t,i)=>(
-        <div key={t.id} className="row-enter" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
-          <div style={{minWidth:0}}>
-            <div style={{fontSize:13,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.envEmoji} {t.desc}</div>
-            <div style={{fontSize:11,color:T.faint}}>{t.bankName} · {t.date}</div>
-          </div>
-          <span style={{color:t.type==="income"?"#10B981":"#ef4444",fontWeight:600,fontSize:13,flexShrink:0,marginLeft:8}}>{t.type==="income"?"+":"-"}{sym(t.currency)}{fmtNum(t.amount)}</span>
+    <div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your investments</div>
+      <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"4px 14px"}}>
+        {buckets.map(bucket=>(
+          <BucketRow key={bucket} bucket={bucket} items={byBucket[bucket]} overviewCur={overviewCur} hideTotals={hideTotals}/>
+        ))}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0 10px",marginTop:2,borderTop:`1px dashed ${T.border}`}}>
+          <span style={{fontSize:12,color:T.subtext}}>Total investments ({overviewCur})</span>
+          <span style={{fontSize:15,fontWeight:800,color:"#8B5CF6"}}>{hideTotals?"••••••":(grandTotal===null?"…":`${sym(overviewCur)}${fmtNum(grandTotal)}`)}</span>
         </div>
-      ))}
+      </div>
     </div>
   );
 }
-function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
+function BucketRow({bucket,items,overviewCur,hideTotals}){
+  const total=useMultiConvert(items.map(it=>({amount:it.value,currency:it.currency})),overviewCur);
+  const c=bucketColor(bucket);
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0",borderBottom:`1px solid ${T.border}`}}>
+      <div style={{width:38,height:38,borderRadius:10,flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,background:`${c}22`}}>{BUCKET_ICONS[bucket]||"📦"}</div>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontSize:13.5,fontWeight:600,color:T.text}}>{bucket}</div>
+        <div style={{fontSize:11,color:T.faint,marginTop:1}}>{items.length} holding{items.length!==1?"s":""}</div>
+      </div>
+      <div style={{fontSize:14.5,fontWeight:700,color:T.text,flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{hideTotals?"••••••":(total===null?"…":`${sym(overviewCur)}${fmtNum(total)}`)}</div>
+    </div>
+  );
+}
+function Dashboard({banks,investments,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
@@ -1461,9 +1495,8 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
         </button>
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
-      <QuickAdd banks={banks} setBanks={setBanks} tags={tags}/>
-      <ThisMonthCard banks={banks} overviewCur={overviewCur}/>
-      <RecentActivity banks={banks}/>
+      <BanksByCurrency banks={banks} hideTotals={hideTotals}/>
+      <InvestmentsByBucket investments={investments} overviewCur={overviewCur} hideTotals={hideTotals}/>
     </div>
   );
 }
@@ -1718,7 +1751,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
           {TABS.map((t,i)=>(<button key={t} onClick={()=>setTab(i)} style={{background:tab===i?TAB_COLORS[i]:T.card,color:tab===i?"#fff":T.subtext,border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap"}}>{t}</button>))}
         </div>
         {syncStatus==="loading"?<DashboardSkeleton/>:<>
-        {tab===0&&<Dashboard banks={banks} setBanks={setBanks} investments={investments} tags={tags} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals}/>}
+        {tab===0&&<Dashboard banks={banks} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
         {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs}/>}
