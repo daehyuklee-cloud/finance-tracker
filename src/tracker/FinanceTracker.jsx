@@ -10,7 +10,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.9.0";
+const VERSION = "v5.10.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -120,30 +120,46 @@ const THEMES = {
 let T = THEMES.light;
 
 const rateCache={};
+// Rate-service health, exposed as a tiny pub/sub hook so any component can
+// tell "still converting" apart from "the exchange-rate API is down" instead
+// of both looking like an endless "Converting…". A failed pair is never
+// cached (only successes are), so the next render/retry always re-attempts
+// the network instead of being stuck on a poisoned null forever.
+let rateHealthy=true;
+let rateHealthListeners=[];
+function setRateHealthy(v){ if(v!==rateHealthy){rateHealthy=v;rateHealthListeners.forEach(f=>f(v));} }
+function useRateHealth(){
+  const[h,setH]=useState(rateHealthy);
+  useEffect(()=>{const f=v=>setH(v);rateHealthListeners.push(f);return()=>{rateHealthListeners=rateHealthListeners.filter(x=>x!==f);};},[]);
+  return h;
+}
 async function fetchRate(from,to){
   if(from===to)return 1;
   const key=`${from}_${to}`;
   if(rateCache[key]!==undefined)return rateCache[key];
   try{
-    const res=await fetch(`https://open.er-api.com/v6/latest/${from}`);
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),8000);
+    const res=await fetch(`https://open.er-api.com/v6/latest/${from}`,{signal:ctrl.signal});
+    clearTimeout(timer);
     const data=await res.json();
     const r=(data.result==="success"&&data.rates?.[to])?data.rates[to]:null;
-    if(r!==null)Object.entries(data.rates||{}).forEach(([cur,val])=>{rateCache[`${from}_${cur}`]=val;});
-    else rateCache[key]=null;
+    if(r!==null){Object.entries(data.rates||{}).forEach(([cur,val])=>{rateCache[`${from}_${cur}`]=val;});setRateHealthy(true);}
+    else setRateHealthy(false);
     return r;
-  }catch{return null;}
+  }catch{setRateHealthy(false);return null;}
 }
-function useMultiConvert(items,target){
+function useMultiConvert(items,target,retryTick=0){
   const[total,setTotal]=useState(null);
   useEffect(()=>{
     let active=true;
     (async()=>{let sum=0,ok=true;for(const it of items){const r=await fetchRate(it.currency,target);if(r===null){ok=false;break;}sum+=it.amount*r;}if(active)setTotal(ok?sum:null);})();
     return()=>{active=false;};
   // eslint-disable-next-line
-  },[JSON.stringify(items),target]);
+  },[JSON.stringify(items),target,retryTick]);
   return total;
 }
-function useConvertedItems(items,target){
+function useConvertedItems(items,target,retryTick=0){
   const[converted,setConverted]=useState(null);
   useEffect(()=>{
     let active=true;
@@ -154,7 +170,7 @@ function useConvertedItems(items,target){
     })();
     return()=>{active=false;};
   // eslint-disable-next-line
-  },[JSON.stringify(items),target]);
+  },[JSON.stringify(items),target,retryTick]);
   return converted;
 }
 function ConversionBadge({amount,fromCurrency,toCurrency,style}){
@@ -1067,83 +1083,93 @@ function BarChart({data}){
     </div>
   );
 }
-function AnalyticsSection({banks}){
+function AnalyticsSection({banks,prefs,setPrefs}){
   const today=new Date();
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
+  const sixMonthsAgo=new Date(today.getFullYear(),today.getMonth()-5,1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
   const[to,setTo]=useState(localDateStr());
-  const accountIds=banks.map(b=>String(b.id));
-  const[selectedAccounts,setSelectedAccounts]=useState(()=>{
-    try{
-      const saved=JSON.parse(localStorage.getItem("analyticsAccounts")||"null");
-      if(Array.isArray(saved)&&saved.length)return saved;
-    }catch{}
-    return accountIds;
-  });
-  useEffect(()=>{
-    setSelectedAccounts(prev=>{
-      const newOnes=accountIds.filter(id=>!prev.includes(id));
-      if(newOnes.length===0)return prev;
-      const next=[...prev.filter(id=>accountIds.includes(id)),...newOnes];
-      try{localStorage.setItem("analyticsAccounts",JSON.stringify(next));}catch{}
-      return next;
-    });
-  // eslint-disable-next-line
-  },[accountIds.join(",")]);
-  const[targetCur,setTargetCur]=useState(()=>{try{return localStorage.getItem("analyticsTargetCurrency")||"USD";}catch{return "USD";}});
-  const effectiveSelected=selectedAccounts.filter(id=>accountIds.includes(id));
-  const activeAccounts=effectiveSelected.length?effectiveSelected:accountIds;
+  const[retryTick,setRetryTick]=useState(0);
+  const rateHealthy=useRateHealth();
+
+  // Currency-first: pick a native currency and everything computes with zero
+  // network dependency (no FX call can ever break it). "All (converted)" is
+  // an opt-in mode for a cross-currency view, and is the only mode that can
+  // hit the exchange-rate API.
+  const currencies=[...new Set(banks.map(b=>b.currency))];
+  const currencyTab=(prefs.currency&&(prefs.currency==="ALL"||currencies.includes(prefs.currency)))?prefs.currency:(currencies[0]||"ALL");
+  const isAll=currencyTab==="ALL";
+  const setCurrencyTab=c=>setPrefs(p=>({...p,currency:c}));
+  const targetCur=isAll?(prefs.allTargetCurrency||currencies[0]||"USD"):currencyTab;
+  const setAllTarget=c=>setPrefs(p=>({...p,allTargetCurrency:c}));
+
+  const tabBanks=isAll?banks:banks.filter(b=>b.currency===currencyTab);
+  const accountIds=tabBanks.map(b=>String(b.id));
+  const savedAccounts=Array.isArray(prefs.accounts)?prefs.accounts.filter(id=>accountIds.includes(id)):[];
+  const activeAccounts=savedAccounts.length?savedAccounts:accountIds;
   const allSelected=activeAccounts.length===accountIds.length;
   const toggleAccount=id=>{
-    setSelectedAccounts(prev=>{
-      const base=prev.filter(x=>accountIds.includes(x));
-      const next=base.includes(id)?base.filter(x=>x!==id):[...base,id];
-      try{localStorage.setItem("analyticsAccounts",JSON.stringify(next));}catch{}
-      return next;
-    });
+    const base=(Array.isArray(prefs.accounts)?prefs.accounts:accountIds).filter(x=>accountIds.includes(x));
+    const next=base.includes(id)?base.filter(x=>x!==id):[...base,id];
+    setPrefs(p=>({...p,accounts:next}));
   };
-  const selectAllAccounts=()=>{
-    try{localStorage.setItem("analyticsAccounts",JSON.stringify(accountIds));}catch{}
-    setSelectedAccounts(accountIds);
-  };
-  const setTargetPersist=c=>{setTargetCur(c);try{localStorage.setItem("analyticsTargetCurrency",c);}catch{}};
-  const allTx=banks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date>=from&&t.date<=to&&t.tag!=="Transfer");
-  const converted=useConvertedItems(allTx,targetCur);
-  const loading=converted===null;
-  const txForCalc=converted||[];
-  const income=txForCalc.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
-  const expense=txForCalc.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
-  const tagTotals={};txForCalc.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
+  const selectAllAccounts=()=>setPrefs(p=>({...p,accounts:accountIds}));
+
+  const rawTx=tabBanks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.tag!=="Transfer");
+  const rangeTxRaw=rawTx.filter(t=>t.date>=from&&t.date<=to);
+  const trendTxRaw=rawTx.filter(t=>t.date>=sixMonthsAgo); // independent of the From/To picker on purpose — this is a fixed 6-month trend, not "whatever the summary above is scoped to"
+
+  const rangeConverted=useConvertedItems(isAll?rangeTxRaw:[],targetCur,retryTick);
+  const trendConverted=useConvertedItems(isAll?trendTxRaw:[],targetCur,retryTick);
+  const loading=isAll&&(rangeConverted===null||trendConverted===null);
+  const rangeTx=isAll?(rangeConverted||[]):rangeTxRaw;
+  const trendTx=isAll?(trendConverted||[]):trendTxRaw;
+  const showRateError=isAll&&loading&&!rateHealthy;
+
+  const income=rangeTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+  const expense=rangeTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+  const tagTotals={};rangeTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
   const pieData=Object.entries(tagTotals).map(([label,value])=>({label,value,currencySym:sym(targetCur)}));
-  const monthTotals={};txForCalc.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
+  const monthTotals={};trendTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
   const barData=Object.entries(monthTotals).sort(([a],[b])=>a.localeCompare(b)).slice(-6).map(([label,value])=>({label:label.slice(5),value,currencySym:sym(targetCur)}));
+
   return(
     <div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
+        {currencies.map(c=>(
+          <button key={c} onClick={()=>setCurrencyTab(c)} style={{background:currencyTab===c?getCurrencyColor(c):T.card,color:currencyTab===c?"#fff":T.subtext,border:`1px solid ${currencyTab===c?getCurrencyColor(c):T.border}`,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:13,fontWeight:600}}>{c}</button>
+        ))}
+        {currencies.length>1&&<button onClick={()=>setCurrencyTab("ALL")} style={{background:isAll?T.text:T.card,color:isAll?T.bg:T.subtext,border:`1px solid ${isAll?T.text:T.border}`,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:13,fontWeight:600}}>🌐 All (converted)</button>}
+        {banks.length===0&&<span style={{fontSize:12,color:T.faint}}>No banks yet.</span>}
+      </div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"flex-end"}}>
         <div><div style={{fontSize:11,color:T.subtext,marginBottom:4}}>From</div><input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}/></div>
         <div><div style={{fontSize:11,color:T.subtext,marginBottom:4}}>To</div><input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}/></div>
-        <div>
-          <div style={{fontSize:11,color:T.subtext,marginBottom:4}}>Show in</div>
-          <select value={targetCur} onChange={e=>setTargetPersist(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}>
+        {isAll&&<div>
+          <div style={{fontSize:11,color:T.subtext,marginBottom:4}}>Convert to</div>
+          <select value={targetCur} onChange={e=>setAllTarget(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:"6px 10px",color:T.text,fontSize:13}}>
             {[...new Set([targetCur,...CURRENCY_LIST])].map(c=><option key={c} value={c}>{c}</option>)}
           </select>
-        </div>
+        </div>}
       </div>
       <div style={{marginBottom:16}}>
         <div style={{fontSize:11,color:T.subtext,marginBottom:6}}>Accounts included</div>
         <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-          {banks.length===0&&<span style={{fontSize:12,color:T.faint}}>No banks yet.</span>}
           <button onClick={selectAllAccounts} style={{background:allSelected?T.text:T.card,color:allSelected?T.bg:T.subtext,border:`1px solid ${allSelected?T.text:T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>All accounts</button>
-          {banks.map(b=>{
+          {tabBanks.map(b=>{
             const on=activeAccounts.includes(String(b.id));
             const c=bankColor(b);
             return(
-              <button key={b.id} onClick={()=>toggleAccount(String(b.id))} style={{background:on?c:T.card,color:on?"#fff":T.subtext,border:`1px solid ${on?c:T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:500}}>{b.name} <span style={{opacity:0.85}}>({b.currency})</span></button>
+              <button key={b.id} onClick={()=>toggleAccount(String(b.id))} style={{background:on?c:T.card,color:on?"#fff":T.subtext,border:`1px solid ${on?c:T.border}`,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:500}}>{b.name}{isAll?<span style={{opacity:0.85}}> ({b.currency})</span>:null}</button>
             );
           })}
         </div>
       </div>
-      {loading&&banks.length>0&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
+      {showRateError&&<div style={{background:T.card,border:"1px solid #ef444466",borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}>
+        <div style={{color:"#ef4444",fontSize:13,marginBottom:10}}>⚠️ Couldn't reach the exchange-rate service, so amounts can't be converted right now.</div>
+        <Btn small color="#ef4444" onClick={()=>setRetryTick(t=>t+1)}>Retry</Btn>
+      </div>}
+      {loading&&!showRateError&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
       {!loading&&<>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
           <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #10B98133"}}><div style={{fontSize:12,color:T.subtext}}>Income</div><div style={{fontSize:22,fontWeight:700,color:"#10B981"}}>{sym(targetCur)}{fmtNum(income)}</div></div>
@@ -1152,7 +1178,7 @@ function AnalyticsSection({banks}){
         <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}><span style={{fontSize:12,color:T.subtext}}>Net: </span><span style={{fontSize:16,fontWeight:700,color:income-expense>=0?"#10B981":"#ef4444"}}>{sym(targetCur)}{fmtNum(income-expense)}</span></div>
         <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Income vs Expense</div><PieChart data={[{label:"Income",value:income,currencySym:sym(targetCur)},{label:"Expense",value:expense,currencySym:sym(targetCur)}]}/></div>
         <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Spending by Tag</div><PieChart data={pieData}/></div>
-        <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending</div><BarChart data={barData}/></div>
+        <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending <span style={{fontWeight:400,color:T.faint,fontSize:11}}>(trailing 6 months, independent of the date filter above)</span></div><BarChart data={barData}/></div>
       </>}
     </div>
   );
@@ -1442,11 +1468,46 @@ function CustomTotal({banks,investments}){
   );
 }
 
+function ThisMonthCard({banks,overviewCur}){
+  const monthKey=localDateStr().slice(0,7);
+  const monthTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date?.slice(0,7)===monthKey&&t.tag!=="Transfer");
+  const converted=useConvertedItems(monthTx,overviewCur);
+  const loading=converted===null;
+  const income=(converted||[]).filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
+  const expense=(converted||[]).filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+  const net=income-expense;
+  return(
+    <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${T.border}`}}>
+      <div style={{fontSize:12,color:T.subtext,marginBottom:10}}>This month, in {overviewCur}</div>
+      {loading&&monthTx.length>0?<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>Converting…</div>:
+      monthTx.length===0?<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>No transactions yet this month.</div>:
+      <div style={{display:"flex",justifyContent:"space-between",gap:8}}>
+        <div><div style={{fontSize:11,color:T.subtext}}>Income</div><div style={{fontSize:17,fontWeight:700,color:"#10B981"}}>{sym(overviewCur)}{fmtNum(income)}</div></div>
+        <div><div style={{fontSize:11,color:T.subtext}}>Expense</div><div style={{fontSize:17,fontWeight:700,color:"#ef4444"}}>{sym(overviewCur)}{fmtNum(expense)}</div></div>
+        <div><div style={{fontSize:11,color:T.subtext}}>Net</div><div style={{fontSize:17,fontWeight:700,color:net>=0?"#10B981":"#ef4444"}}>{sym(overviewCur)}{fmtNum(net)}</div></div>
+      </div>}
+    </div>
+  );
+}
+function RecentActivity({banks}){
+  const recent=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,bankName:b.name,bankColor:bankColor(b),currency:b.currency,envEmoji:e.isUnalloc?"📂":(e.emoji||"🗂️")})))).filter(t=>t.tag!=="Transfer").sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id).slice(0,5);
+  return(
+    <div style={{background:T.card,borderRadius:12,padding:16,border:`1px solid ${T.border}`}}>
+      <div style={{fontSize:12,color:T.subtext,marginBottom:10}}>Recent activity</div>
+      {recent.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>No transactions yet.</div>}
+      {recent.map((t,i)=>(
+        <div key={t.id} className="row-enter" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+          <div style={{minWidth:0}}>
+            <div style={{fontSize:13,color:T.text,fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.envEmoji} {t.desc}</div>
+            <div style={{fontSize:11,color:T.faint}}>{t.bankName} · {t.date}</div>
+          </div>
+          <span style={{color:t.type==="income"?"#10B981":"#ef4444",fontWeight:600,fontSize:13,flexShrink:0,marginLeft:8}}>{t.type==="income"?"+":"-"}{sym(t.currency)}{fmtNum(t.amount)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
-  const byCurrency=banks.reduce((acc,b)=>{acc[b.currency]=(acc[b.currency]||0)+bankTotal(b);return acc;},{});
-  const invByCurrency={};investments.forEach(inv=>(inv.items||[]).forEach(it=>{invByCurrency[it.currency]=(invByCurrency[it.currency]||0)+it.value;}));
-  const invItems=investments.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})));
-  const invConverted=useMultiConvert(invItems,overviewCur);
   return(
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
@@ -1456,40 +1517,9 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
       <QuickAdd banks={banks} setBanks={setBanks} tags={tags}/>
-      <CustomTotal banks={banks} investments={investments}/>
-      <div style={{fontSize:13,color:T.subtext,marginBottom:12}}>Accounts overview</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
-        {Object.entries(byCurrency).map(([currency,total])=>(
-          <div key={currency} style={{background:T.card,borderRadius:12,padding:18,border:`1px solid ${getCurrencyColor(currency)}33`}}>
-            <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>{currency} Banks</div>
-            <div style={{fontSize:20,fontWeight:700,color:getCurrencyColor(currency)}}>{sym(currency)}{fmtNum(total)}</div>
-            <div style={{fontSize:12,color:T.faint,marginTop:2}}>{banks.filter(b=>b.currency===currency).length} accounts</div>
-          </div>
-        ))}
-        <div style={{background:T.card,borderRadius:12,padding:18,border:"1px solid #8B5CF633"}}>
-          <div style={{fontSize:12,color:T.subtext,marginBottom:4}}>Investments ({overviewCur})</div>
-          <div style={{fontSize:20,fontWeight:700,color:"#8B5CF6"}}>{invConverted===null?"…":`${sym(overviewCur)}${fmtNum(invConverted)}`}</div>
-          <div style={{fontSize:11,color:T.faint,marginTop:2}}>{Object.entries(invByCurrency).map(([c,v])=>`${sym(c)}${fmtNum(v)}`).join(" · ")||"none"}</div>
-        </div>
-      </div>
-      {Object.entries(banks.reduce((acc,b)=>{(acc[b.currency]=acc[b.currency]||[]).push(b);return acc;},{})).map(([currency,cBanks])=>(
-        <div key={currency} style={{marginBottom:20}}>
-          <div style={{fontSize:13,fontWeight:600,color:getCurrencyColor(currency),marginBottom:8}}>{currency} Accounts</div>
-          {cBanks.map(b=>(
-            <div key={b.id} style={{marginBottom:8}}>
-              <div style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${T.border}`,fontSize:14,color:T.text,fontWeight:600}}>
-                <span>{b.name}</span><span style={{color:bankColor(b)}}>{sym(currency)}{fmtNum(bankTotal(b))}</span>
-              </div>
-              {(b.envelopes||[]).map(e=>(
-                <div key={e.id} style={{display:"flex",justifyContent:"space-between",padding:"4px 0 4px 14px",fontSize:12,color:e.isUnalloc?T.faint:T.subtext,fontStyle:e.isUnalloc?"italic":"normal"}}>
-                  <span>{e.isUnalloc?"📂":(e.emoji||"🗂️")} {e.name}{e.goal?` (${Math.min(100,Math.round((e.balance/e.goal)*100))}%)`:""}</span>
-                  <span style={{color:e.isUnalloc?T.faint:bankColor(b)}}>{sym(currency)}{fmtNum(e.balance)}</span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      ))}
+      <ThisMonthCard banks={banks} overviewCur={overviewCur}/>
+      <RecentActivity banks={banks}/>
+      <div style={{marginTop:16}}><CustomTotal banks={banks} investments={investments}/></div>
     </div>
   );
 }
@@ -1582,6 +1612,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
   const[profile,setProfile]=useState({name:"",photo:""});
   const[overviewCur,setOverviewCur]=useState("USD");
   const[hideTotals,setHideTotals]=useState(false);
+  const[analyticsPrefs,setAnalyticsPrefs]=useState({currency:null,accounts:null});
   const[syncStatus,setSyncStatus]=useState("loading");
   const isOnline=useOnlineStatus();
   const saveTimerRef=useRef(null);
@@ -1607,6 +1638,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         if(data.profile)setProfile(data.profile);
         if(data.overviewCur)setOverviewCur(data.overviewCur);
         if(data.hideTotals!==undefined)setHideTotals(data.hideTotals);
+        if(data.analyticsPrefs)setAnalyticsPrefs(data.analyticsPrefs);
       }
       setSyncStatus("saved");
       initialLoadDone.current=true;
@@ -1616,17 +1648,17 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
-    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
+    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
     setSyncStatus("saving");
     if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
     saveTimerRef.current=setTimeout(async()=>{
-      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
+      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
       if(result==="synced")setSyncStatus("saved");
       else if(result==="queued-offline")setSyncStatus("offline");
       else{setSyncStatus("error");toast("error","Couldn't reach the server — saved on this device and will sync once it's back.");}
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
-  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,userId,isOnline]);
+  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,userId,isOnline]);
 
   useEffect(()=>{
     const flushPendingSave=()=>{
@@ -1668,8 +1700,9 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
     if(p.profile)setProfile(p.profile);
     if(p.overviewCur)setOverviewCur(p.overviewCur);
     if(p.hideTotals!==undefined)setHideTotals(p.hideTotals);
+    if(p.analyticsPrefs)setAnalyticsPrefs(p.analyticsPrefs);
   };
-  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals});
+  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
   const TAB_COLORS=["#3B82F6","#3B82F6","#8B5CF6","#06B6D4","#10B981","#64748B"];
 
   return(
@@ -1694,7 +1727,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         {tab===0&&<Dashboard banks={banks} setBanks={setBanks} investments={investments} tags={tags} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
-        {tab===3&&<AnalyticsSection banks={banks}/>}
+        {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
         {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
