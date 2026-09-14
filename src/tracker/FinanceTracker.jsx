@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.13.1";
+const VERSION = "v5.14.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -271,6 +271,84 @@ function daysLeftInMonth(){
   const now=new Date();
   const lastDay=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
   return lastDay-now.getDate()+1;
+}
+
+// ── Observations: plain rule-based checks over your own data. No LLM, no
+// network, nothing leaves the device — just arithmetic on numbers you
+// already have, surfaced instead of left buried in a bank/envelope you'd
+// have to go dig into yourself. ──
+function computeObservations(banks){
+  const obs=[];
+  const today=new Date();
+  const monthKey=localDateStr().slice(0,7);
+  const cutoff60=new Date(today.getTime()-60*86400000).toISOString().slice(0,10);
+  const cutoff30=new Date(today.getTime()-30*86400000).toISOString().slice(0,10);
+  const dayOfMonth=today.getDate();
+  const daysInMonth=new Date(today.getFullYear(),today.getMonth()+1,0).getDate();
+
+  banks.forEach(b=>{
+    const bTotal=bankTotal(b);
+    if(bTotal<=0)return;
+    b.envelopes.forEach(e=>{
+      if(e.balance>0){
+        const lastTxDate=e.transactions.reduce((max,t)=>t.date>max?t.date:max,"");
+        const idle=!lastTxDate||lastTxDate<cutoff60;
+        if(idle&&e.balance>=bTotal*0.1){
+          obs.push({id:`idle_${b.id}_${e.id}`,icon:"💤",tone:"warn",
+            text:`${sym(b.currency)}${fmtNum(e.balance)} in ${e.isUnalloc?`${b.name}'s Unallocated`:`"${e.name}" (${b.name})`} hasn't moved in 60+ days.`});
+        }
+      }
+      if(e.budget&&dayOfMonth>=5){
+        const spent=envelopeMonthSpend(e);
+        const projected=(spent/dayOfMonth)*daysInMonth;
+        if(projected>e.budget*1.1){
+          const overPct=Math.round(((projected-e.budget)/e.budget)*100);
+          obs.push({id:`budget_${b.id}_${e.id}`,icon:"⚠️",tone:"warn",
+            text:`On pace to spend ${sym(b.currency)}${fmtNum(projected)} in "${e.name}" this month — ${overPct}% over your ${sym(b.currency)}${fmtNum(e.budget)} budget.`});
+        }
+      }
+      if(e.goal&&e.balance<e.goal){
+        const recentIncome=e.transactions.some(t=>t.type==="income"&&t.date>=cutoff30);
+        if(!recentIncome){
+          obs.push({id:`goal_${b.id}_${e.id}`,icon:"🐌",tone:"warn",
+            text:`"${e.name}" hasn't grown in 30+ days — still ${sym(b.currency)}${fmtNum(e.goal-e.balance)} away from its ${sym(b.currency)}${fmtNum(e.goal)} goal.`});
+        }
+      }
+    });
+  });
+
+  const byCurrency={};
+  banks.forEach(b=>{(byCurrency[b.currency]=byCurrency[b.currency]||[]).push(b);});
+
+  Object.entries(byCurrency).forEach(([currency,cBanks])=>{
+    const expenseTx=cBanks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.filter(t=>t.type==="expense"&&t.tag!=="Transfer")));
+    const byTagMonth={};
+    expenseTx.forEach(t=>{
+      const mk=t.date?.slice(0,7);if(!mk)return;
+      const tag=t.tag||"Untagged";
+      byTagMonth[tag]=byTagMonth[tag]||{};
+      byTagMonth[tag][mk]=(byTagMonth[tag][mk]||0)+t.amount;
+    });
+    Object.entries(byTagMonth).forEach(([tag,months])=>{
+      const completed=Object.keys(months).filter(k=>k!==monthKey).sort().slice(-3);
+      if(completed.length<3)return;
+      const[v0,v1,v2]=completed.map(k=>months[k]);
+      if(v0<v1&&v1<v2){
+        obs.push({id:`trend_${currency}_${tag}`,icon:"📈",tone:"info",
+          text:`"${tag}" spending has grown for 3 months straight (${sym(currency)}${fmtNum(v0)} → ${sym(currency)}${fmtNum(v2)}).`});
+      }
+    });
+    const monthTx=expenseTx.filter(t=>t.date?.slice(0,7)===monthKey);
+    if(monthTx.length){
+      const biggest=monthTx.reduce((a,b)=>b.amount>a.amount?b:a);
+      if(biggest.amount>0){
+        obs.push({id:`biggest_${currency}`,icon:"🔎",tone:"info",
+          text:`Biggest expense this month (${currency}): ${sym(currency)}${fmtNum(biggest.amount)} — "${biggest.desc}"${biggest.tag?` · ${biggest.tag}`:""}.`});
+      }
+    }
+  });
+
+  return obs.sort((a,b)=>(a.tone==="warn"?0:1)-(b.tone==="warn"?0:1));
 }
 
 function AddTxModal({envName,tx,setTx,tags,color,onAdd,onClose}){
@@ -1190,6 +1268,7 @@ function AnalyticsSection({banks,prefs,setPrefs}){
   const nwDeltaPct=(netWorthTrend&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
 
   const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
+  const allObservations=computeObservations(banks);
 
   return(
     <div>
@@ -1294,6 +1373,18 @@ function AnalyticsSection({banks,prefs,setPrefs}){
               </div>
             );
           })}
+        </div>
+
+        <div style={{background:T.card,borderRadius:12,padding:16,marginTop:14,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Observations</div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:12}}>Plain rule-based checks over your data — no AI, nothing sent anywhere</div>
+          {allObservations.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>Nothing to flag right now.</div>}
+          {allObservations.map((o,i)=>(
+            <div key={o.id} style={{display:"flex",gap:10,alignItems:"flex-start",padding:"10px 0",borderTop:i>0?`1px solid ${T.border}`:"none"}}>
+              <div style={{fontSize:16,lineHeight:1.3,flexShrink:0}}>{o.icon}</div>
+              <div style={{fontSize:12.5,color:T.text,lineHeight:1.45}}>{o.text}</div>
+            </div>
+          ))}
         </div>
       </>}
     </div>
@@ -1598,6 +1689,18 @@ function BucketRow({bucket,items,overviewCur,hideTotals}){
     </div>
   );
 }
+function ObservationBanner({banks}){
+  const obs=computeObservations(banks);
+  if(!obs.length)return null;
+  const top=obs[0];
+  return(
+    <div style={{display:"flex",gap:10,alignItems:"flex-start",background:top.tone==="warn"?"#F59E0B12":"linear-gradient(135deg,#3B82F612,#8B5CF612)",border:`1px solid ${top.tone==="warn"?"#F59E0B44":"#8B5CF633"}`,borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+      <div style={{fontSize:17,lineHeight:1}}>{top.icon}</div>
+      <div style={{fontSize:12.5,color:T.text,lineHeight:1.45,flex:1}}>{top.text}</div>
+      {obs.length>1&&<div style={{fontSize:11,color:T.faint,flexShrink:0,whiteSpace:"nowrap"}}>+{obs.length-1} more in Analytics</div>}
+    </div>
+  );
+}
 function Dashboard({banks,investments,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
   return(
     <div>
@@ -1607,6 +1710,7 @@ function Dashboard({banks,investments,overviewCur,setOverviewCur,hideTotals,setH
         </button>
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
+      <ObservationBanner banks={banks}/>
       <BanksByCurrency banks={banks} hideTotals={hideTotals}/>
       <InvestmentsByBucket investments={investments} overviewCur={overviewCur} hideTotals={hideTotals}/>
     </div>
