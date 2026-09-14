@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { loadData, saveData, syncWhenOnline } from "../db";
+import { isLockEnabled, isWebAuthnSupported, hasWebAuthnCredential, hasPin, enrollWebAuthn, setPin as setLockPin, disableLock } from "../lock";
 
 const TABS = ["Dashboard", "Banks", "Investments", "Analytics", "Notes", "Settings"];
 const COLORS_LIST = ["#3B82F6","#10B981","#F59E0B","#8B5CF6","#EC4899","#06B6D4","#F97316","#84CC16","#EF4444","#14B8A6"];
@@ -10,7 +11,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.10.0";
+const VERSION = "v5.11.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1524,7 +1525,55 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
   );
 }
 
-function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,getData,onImport,onSignOut}){
+function LockSettingsCard({userId,userEmail}){
+  const[enabled,setEnabled]=useState(isLockEnabled());
+  const[hasBiometric,setHasBiometric]=useState(hasWebAuthnCredential());
+  const[pinSet,setPinSet]=useState(hasPin());
+  const[showPinSetup,setShowPinSetup]=useState(false);
+  const[pin1,setPin1]=useState("");const[pin2,setPin2]=useState("");
+  const[err,setErr]=useState("");
+  const supported=isWebAuthnSupported();
+  const enroll=async()=>{
+    setErr("");
+    try{await enrollWebAuthn(userId,userEmail);setEnabled(true);setHasBiometric(true);toast("success","Face ID / Touch ID enabled.");}
+    catch{setErr("Couldn't set up biometric unlock on this device. Try a PIN instead.");}
+  };
+  const savePin=async()=>{
+    if(pin1.length<4){setErr("PIN must be at least 4 digits.");return;}
+    if(pin1!==pin2){setErr("PINs don't match.");return;}
+    await setLockPin(pin1);
+    setPinSet(true);setEnabled(true);setShowPinSetup(false);setPin1("");setPin2("");setErr("");
+    toast("success","PIN unlock enabled.");
+  };
+  const turnOff=()=>{disableLock();setEnabled(false);setHasBiometric(false);setPinSet(false);toast("success","App lock turned off.");};
+  return(
+    <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${T.border}`}}>
+      <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:6}}>🔒 App Lock</div>
+      <div style={{fontSize:12,color:T.subtext,marginBottom:12}}>Require Face ID, Touch ID, or a PIN to open acountee on this device — including when you're offline.</div>
+      <FormError msg={err}/>
+      {enabled?<div>
+        <div style={{fontSize:13,color:"#10B981",fontWeight:600,marginBottom:10}}>✓ Lock is on{hasBiometric?" (biometric)":pinSet?" (PIN)":""}</div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {supported&&!hasBiometric&&<Btn small outline color="#3B82F6" onClick={enroll}>Add Face ID / Touch ID</Btn>}
+          {!pinSet&&<Btn small outline color="#3B82F6" onClick={()=>setShowPinSetup(true)}>{pinSet?"Change PIN":"Add PIN backup"}</Btn>}
+          <Btn small outline color="#ef4444" onClick={turnOff}>Turn off lock</Btn>
+        </div>
+      </div>:<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        {supported&&<Btn small color="#3B82F6" onClick={enroll}>Set up Face ID / Touch ID</Btn>}
+        <Btn small outline color="#3B82F6" onClick={()=>setShowPinSetup(true)}>Set up PIN instead</Btn>
+      </div>}
+      {showPinSetup&&<div style={{marginTop:12,paddingTop:12,borderTop:`1px solid ${T.border}`}}>
+        <Inp label="New PIN (4+ digits)" type="password" inputMode="numeric" value={pin1} onChange={e=>setPin1(e.target.value)}/>
+        <Inp label="Confirm PIN" type="password" inputMode="numeric" value={pin2} onChange={e=>setPin2(e.target.value)}/>
+        <div style={{display:"flex",gap:8}}>
+          <Btn small color="#3B82F6" onClick={savePin}>Save PIN</Btn>
+          <Btn small outline color={T.subtext} onClick={()=>{setShowPinSetup(false);setErr("");}}>Cancel</Btn>
+        </div>
+      </div>}
+    </div>
+  );
+}
+function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,userId,userEmail,getData,onImport,onSignOut}){
   const[newTag,setNewTag]=useState("");
   const[confirmDelTag,setConfirmDelTag]=useState(null);
   const[pendingImport,setPendingImport]=useState(null);
@@ -1558,6 +1607,7 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
         <Inp label="Display Name (blank uses Google)" value={profile.name} onChange={e=>setProfile(p=>({...p,name:e.target.value}))} placeholder={googleName||"Your name"}/>
         <div style={{fontSize:12,color:T.faint}}>Showing as: <strong style={{color:T.text}}>{displayName||"—"}</strong></div>
       </div>
+      <LockSettingsCard userId={userId} userEmail={userEmail}/>
       <div style={card}>
         <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:12}}>🎨 Appearance</div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
@@ -1599,7 +1649,7 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
     </div>
   );
 }
-export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSignOut}){
+export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOffline,onSignOut}){
   const[tab,setTab]=useState(0);
   const[theme,setTheme]=useState("light");
   T=THEMES[theme];
@@ -1708,6 +1758,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.text,fontFamily:"system-ui,sans-serif"}}>
       <ToastHost/>
+      {isOffline&&<div style={{background:"#F97316",color:"#fff",textAlign:"center",fontSize:12,fontWeight:600,padding:"6px 12px"}}>📵 Offline — showing data saved on this device. Changes will sync once you're back online.</div>}
       <div style={{maxWidth:680,margin:"0 auto",padding:"0 16px 40px"}}>
         <div style={{padding:"20px 0 12px",borderBottom:`1px solid ${T.border}`,marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
           <div>
@@ -1729,7 +1780,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,onSi
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
         {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
-        {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
+        {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
       </div>
     </div>
