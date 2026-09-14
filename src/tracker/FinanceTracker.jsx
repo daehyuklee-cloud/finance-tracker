@@ -11,7 +11,7 @@ const MAX_HISTORY = 50;
 const CURRENCY_SYMBOLS = { PHP:"₱", SGD:"S$", USD:"$", KRW:"₩", JPY:"¥", EUR:"€", GBP:"£", AUD:"A$", HKD:"HK$", MYR:"RM", IDR:"Rp", THB:"฿" };
 const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Bonds","Other"];
-const VERSION = "v5.11.0";
+const VERSION = "v5.11.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1413,62 +1413,6 @@ function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
   );
 }
 
-function CustomTotal({banks,investments}){
-  const[selected,setSelected]=useState({});
-  const[target,setTarget]=useState(()=>{try{return localStorage.getItem("customTotalCurrency")||"USD";}catch{return "USD";}});
-  const setTargetPersist=c=>{setTarget(c);try{localStorage.setItem("customTotalCurrency",c);}catch{}};
-  const toggleBank=bankId=>{setSelected(s=>{const selecting=!s[`bank_${bankId}`];const next={...s,[`bank_${bankId}`]:selecting};if(selecting)banks.find(b=>String(b.id)===String(bankId))?.envelopes.forEach(e=>{next[`env_${bankId}_${e.id}`]=false;});return next;});};
-  const toggleEnv=(bankId,envId)=>{setSelected(s=>{const selecting=!s[`env_${bankId}_${envId}`];const next={...s,[`env_${bankId}_${envId}`]:selecting};if(selecting)next[`bank_${bankId}`]=false;return next;});};
-  const toggleItem=itemId=>setSelected(s=>({...s,[`item_${itemId}`]:!s[`item_${itemId}`]}));
-  const items=[];
-  banks.forEach(b=>{b.envelopes.forEach(e=>{if(selected[`env_${b.id}_${e.id}`])items.push({amount:e.balance,currency:b.currency});});if(selected[`bank_${b.id}`])items.push({amount:bankTotal(b),currency:b.currency});});
-  investments.forEach(inv=>(inv.items||[]).forEach(it=>{if(selected[`item_${it.id}`])items.push({amount:it.value,currency:it.currency});}));
-  const total=useMultiConvert(items,target);
-  return(
-    <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:20}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-        <div style={{fontSize:13,fontWeight:600,color:T.text}}>🧮 Custom Total</div>
-        <select value={target} onChange={e=>setTargetPersist(e.target.value)} style={{background:T.input,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",color:T.text,fontSize:12}}>
-          {CURRENCY_LIST.map(c=><option key={c} value={c}>{c}</option>)}
-        </select>
-      </div>
-      <div style={{maxHeight:200,overflowY:"auto",marginBottom:12}}>
-        {banks.map(b=>(
-          <div key={b.id} style={{marginBottom:6}}>
-            <label style={{display:"flex",alignItems:"center",gap:6,fontSize:13,color:T.text,cursor:"pointer"}}>
-              <input type="checkbox" checked={!!selected[`bank_${b.id}`]} onChange={()=>toggleBank(b.id)}/>
-              <strong>{b.name}</strong> <span style={{color:T.faint}}>({sym(b.currency)}{fmtNum(bankTotal(b))})</span>
-            </label>
-            <div style={{paddingLeft:20}}>
-              {b.envelopes.map(e=>(
-                <label key={e.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.subtext,cursor:"pointer"}}>
-                  <input type="checkbox" checked={!!selected[`env_${b.id}_${e.id}`]} onChange={()=>toggleEnv(b.id,e.id)}/>
-                  {e.isUnalloc?"📂":(e.emoji||"🗂️")} {e.name} <span style={{color:T.faint}}>({sym(b.currency)}{fmtNum(e.balance)})</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        ))}
-        {investments.length>0&&(
-          <div style={{marginTop:8}}>
-            <div style={{fontSize:11,color:T.faint,marginBottom:4}}>Investment Holdings</div>
-            {investments.flatMap(inv=>(inv.items||[]).map(it=>(
-              <label key={it.id} style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:T.subtext,cursor:"pointer"}}>
-                <input type="checkbox" checked={!!selected[`item_${it.id}`]} onChange={()=>toggleItem(it.id)}/>
-                {inv.name} / {it.name} <span style={{color:T.faint}}>({sym(it.currency)}{fmtNum(it.value)})</span>
-              </label>
-            )))}
-          </div>
-        )}
-      </div>
-      <div style={{borderTop:`1px solid ${T.border}`,paddingTop:10,textAlign:"right"}}>
-        <span style={{fontSize:12,color:T.subtext}}>Total: </span>
-        <span style={{fontSize:18,fontWeight:700,color:"#10B981"}}>{total===null?"…":`${sym(target)}${fmtNum(total)}`}</span>
-      </div>
-    </div>
-  );
-}
-
 function ThisMonthCard({banks,overviewCur}){
   const monthKey=localDateStr().slice(0,7);
   const monthTx=banks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.date?.slice(0,7)===monthKey&&t.tag!=="Transfer");
@@ -1520,7 +1464,6 @@ function Dashboard({banks,setBanks,investments,tags,overviewCur,setOverviewCur,h
       <QuickAdd banks={banks} setBanks={setBanks} tags={tags}/>
       <ThisMonthCard banks={banks} overviewCur={overviewCur}/>
       <RecentActivity banks={banks}/>
-      <div style={{marginTop:16}}><CustomTotal banks={banks} investments={investments}/></div>
     </div>
   );
 }
