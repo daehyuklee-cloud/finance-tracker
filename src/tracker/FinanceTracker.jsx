@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useId } from "react";
 import { loadData, saveData, syncWhenOnline } from "../db";
 import { isLockEnabled, isWebAuthnSupported, hasWebAuthnCredential, hasPin, enrollWebAuthn, setPin as setLockPin, disableLock } from "../lock";
 
@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.12.0";
+const VERSION = "v5.13.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1047,49 +1047,74 @@ function InvestmentsSection({investments,setInvestments,hideTotals}){
   );
 }
 
-function PieChart({data}){
-  const total=data.reduce((s,d)=>s+d.value,0);
-  if(!total)return<div style={{color:T.faint,textAlign:"center",padding:24}}>No data.</div>;
-  let angle=0;
-  const slices=data.map((d,i)=>{const pct=d.value/total;const start=angle;angle+=pct*360;return{...d,start,end:angle,pct,color:COLORS_LIST[i%COLORS_LIST.length]};});
-  const xy=(deg,r)=>[50+r*Math.cos((deg-90)*Math.PI/180),50+r*Math.sin((deg-90)*Math.PI/180)];
-  const arc=(s,e,r)=>{if(e-s>=360)e=359.99;const[x1,y1]=xy(s,r);const[x2,y2]=xy(e,r);const l=e-s>180?1:0;return`M 50 50 L ${x1} ${y1} A ${r} ${r} 0 ${l} 1 ${x2} ${y2} Z`;};
+function LineAreaChart({data,color="#3B82F6"}){
+  const gradId=useId();
+  if(!data||data.length<2)return<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Not enough history yet.</div>;
+  const W=380,H=90,padTop=6,padBottom=14;
+  const values=data.map(d=>d.value);
+  const min=Math.min(...values),max=Math.max(...values);
+  const range=(max-min)||Math.abs(max)||1;
+  const stepX=W/(data.length-1);
+  const pts=data.map((d,i)=>[i*stepX,H-padBottom-((d.value-min)/range)*(H-padTop-padBottom)]);
+  const linePath="M"+pts.map(p=>p.join(",")).join(" L");
+  const areaPath=`${linePath} L${W},${H} L0,${H} Z`;
   return(
-    <div style={{display:"flex",gap:24,alignItems:"center",flexWrap:"wrap"}}>
-      <svg viewBox="0 0 100 100" style={{width:160,height:160,flexShrink:0}}>
-        {slices.map((s,i)=><path key={i} d={arc(s.start,s.end,45)} fill={s.color} stroke={T.bg} strokeWidth="0.5"/>)}
-        <circle cx="50" cy="50" r="25" fill={T.bg}/>
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{overflow:"visible"}}>
+        <defs><linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity="0.35"/><stop offset="100%" stopColor={color} stopOpacity="0"/></linearGradient></defs>
+        <path d={areaPath} fill={`url(#${gradId})`}/>
+        <path d={linePath} fill="none" stroke={color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round"/>
+        <circle cx={pts[pts.length-1][0]} cy={pts[pts.length-1][1]} r="4" fill={color}/>
       </svg>
-      <div style={{display:"flex",flexDirection:"column",gap:6,flex:1}}>
-        {slices.map((s,i)=>(
-          <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12}}>
-            <div style={{display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,borderRadius:2,background:s.color}}/><span style={{fontSize:13,color:T.text}}>{s.label}</span></div>
-            <div><span style={{fontSize:13,color:s.color,fontWeight:600}}>{Math.round(s.pct*100)}%</span><span style={{fontSize:11,color:T.faint,marginLeft:6}}>{s.currencySym}{fmtNum(s.value)}</span></div>
-          </div>
-        ))}
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.faint,marginTop:2}}>
+        {data.map((d,i)=><span key={i}>{d.label}</span>)}
       </div>
     </div>
   );
 }
-function BarChart({data}){
-  if(!data.length)return<div style={{color:T.faint,textAlign:"center",padding:24}}>No data.</div>;
-  const max=Math.max(...data.map(d=>d.value),1);
-  return(
-    <div style={{display:"flex",alignItems:"flex-end",gap:6,height:120,marginTop:8}}>
-      {data.map((d,i)=>(
-        <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-          <div style={{fontSize:10,color:T.faint}}>{d.currencySym}{fmtNum(d.value)}</div>
-          <div style={{width:"100%",background:COLORS_LIST[i%COLORS_LIST.length],borderRadius:"4px 4px 0 0",height:`${Math.max(4,(d.value/max)*80)}px`}}/>
-          <div style={{fontSize:10,color:T.faint,whiteSpace:"nowrap"}}>{d.label}</div>
-        </div>
-      ))}
-    </div>
-  );
+// Reconstructs past net worth from present balances minus every recorded
+// transaction dated after each cutoff — no historical snapshots need to
+// exist for this to work. It's an approximation where balance changes
+// happened outside a transaction (a manual bank-total edit), and in "All"
+// mode it converts every point at TODAY's rate rather than the rate on
+// that historical date (no historical-FX source available) — both are
+// disclosed in the UI rather than presented as exact.
+function useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick){
+  const[trend,setTrend]=useState(null);
+  const key=JSON.stringify(scopedBanks.map(b=>({c:b.currency,bal:bankTotal(b),tx:b.envelopes.flatMap(e=>e.transactions.map(t=>[t.date,t.type,t.amount]))})));
+  useEffect(()=>{
+    let active=true;
+    (async()=>{
+      const today=new Date();
+      const cutoffs=[];
+      for(let i=5;i>=1;i--){const d=new Date(today.getFullYear(),today.getMonth()-i+1,0);cutoffs.push({label:d.toLocaleDateString(undefined,{month:"short"}),date:d.toISOString().slice(0,10)});}
+      cutoffs.push({label:"Now",date:localDateStr()});
+      const currentItems=scopedBanks.map(b=>({amount:bankTotal(b),currency:b.currency}));
+      const txItems=scopedBanks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({date:t.date,amount:t.type==="income"?t.amount:-t.amount,currency:b.currency}))));
+      let convCurrentTotal=0,convTx=txItems,ok=true;
+      if(isAll){
+        for(const it of currentItems){const r=await fetchRate(it.currency,targetCur);if(r===null){ok=false;break;}convCurrentTotal+=it.amount*r;}
+        if(ok){convTx=[];for(const t of txItems){const r=await fetchRate(t.currency,targetCur);if(r===null){ok=false;break;}convTx.push({...t,amount:t.amount*r});}}
+      }else convCurrentTotal=currentItems.reduce((s,it)=>s+it.amount,0);
+      if(!active)return;
+      if(!ok){setTrend(null);return;}
+      setTrend(cutoffs.map(c=>({label:c.label,value:r2(convCurrentTotal-convTx.filter(t=>t.date>c.date).reduce((s,t)=>s+t.amount,0))})));
+    })();
+    return()=>{active=false;};
+  // eslint-disable-next-line
+  },[key,isAll,targetCur,retryTick]);
+  return trend;
+}
+function shiftPeriod(from,to){
+  const f=new Date(from+"T00:00:00"),t=new Date(to+"T00:00:00");
+  const lenDays=Math.round((t-f)/86400000)+1;
+  const prevTo=new Date(f.getTime()-86400000);
+  const prevFrom=new Date(prevTo.getTime()-(lenDays-1)*86400000);
+  return{prevFrom:prevFrom.toISOString().slice(0,10),prevTo:prevTo.toISOString().slice(0,10)};
 }
 function AnalyticsSection({banks,prefs,setPrefs}){
   const today=new Date();
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
-  const sixMonthsAgo=new Date(today.getFullYear(),today.getMonth()-5,1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
   const[to,setTo]=useState(localDateStr());
   const[retryTick,setRetryTick]=useState(0);
@@ -1117,24 +1142,54 @@ function AnalyticsSection({banks,prefs,setPrefs}){
     setPrefs(p=>({...p,accounts:next}));
   };
   const selectAllAccounts=()=>setPrefs(p=>({...p,accounts:accountIds}));
+  const scopedBanks=tabBanks.filter(b=>activeAccounts.includes(String(b.id)));
 
-  const rawTx=tabBanks.filter(b=>activeAccounts.includes(String(b.id))).flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.tag!=="Transfer");
+  const{prevFrom,prevTo}=shiftPeriod(from,to);
+  const rawTx=scopedBanks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({...t,currency:b.currency})))).filter(t=>t.tag!=="Transfer");
   const rangeTxRaw=rawTx.filter(t=>t.date>=from&&t.date<=to);
-  const trendTxRaw=rawTx.filter(t=>t.date>=sixMonthsAgo); // independent of the From/To picker on purpose — this is a fixed 6-month trend, not "whatever the summary above is scoped to"
+  const prevRangeTxRaw=rawTx.filter(t=>t.date>=prevFrom&&t.date<=prevTo);
 
   const rangeConverted=useConvertedItems(isAll?rangeTxRaw:[],targetCur,retryTick);
-  const trendConverted=useConvertedItems(isAll?trendTxRaw:[],targetCur,retryTick);
-  const loading=isAll&&(rangeConverted===null||trendConverted===null);
+  const prevRangeConverted=useConvertedItems(isAll?prevRangeTxRaw:[],targetCur,retryTick);
+  const netWorthTrend=useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick);
+  const loading=isAll&&(rangeConverted===null||prevRangeConverted===null||netWorthTrend===null);
   const rangeTx=isAll?(rangeConverted||[]):rangeTxRaw;
-  const trendTx=isAll?(trendConverted||[]):trendTxRaw;
-  const showRateError=isAll&&loading&&!rateHealthy;
+  const prevRangeTx=isAll?(prevRangeConverted||[]):prevRangeTxRaw;
+  const showRateError=loading&&!rateHealthy;
 
   const income=rangeTx.filter(t=>t.type==="income").reduce((s,t)=>s+t.amount,0);
   const expense=rangeTx.filter(t=>t.type==="expense").reduce((s,t)=>s+t.amount,0);
+  const net=income-expense;
+  const savingsRate=income>0?Math.round((net/income)*100):null;
+
+  // "Your average" savings rate — native-currency only (no FX pass added
+  // just for a comparison baseline); trailing 6 completed months.
+  let avgSavingsRate=null;
+  if(!isAll){
+    const monthlyAgg={};
+    rawTx.forEach(t=>{const mk=t.date?.slice(0,7);if(!mk)return;monthlyAgg[mk]=monthlyAgg[mk]||{inc:0,exp:0};monthlyAgg[mk][t.type==="income"?"inc":"exp"]+=t.amount;});
+    const thisMonthKey=localDateStr().slice(0,7);
+    const pastMonths=Object.keys(monthlyAgg).filter(k=>k!==thisMonthKey).sort().slice(-6);
+    const rates=pastMonths.map(k=>monthlyAgg[k].inc>0?(monthlyAgg[k].inc-monthlyAgg[k].exp)/monthlyAgg[k].inc:null).filter(r=>r!==null);
+    if(rates.length)avgSavingsRate=Math.round((rates.reduce((s,r)=>s+r,0)/rates.length)*100);
+  }
+
   const tagTotals={};rangeTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";tagTotals[k]=(tagTotals[k]||0)+t.amount;});
-  const pieData=Object.entries(tagTotals).map(([label,value])=>({label,value,currencySym:sym(targetCur)}));
-  const monthTotals={};trendTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.date?.slice(0,7)||"?";monthTotals[k]=(monthTotals[k]||0)+t.amount;});
-  const barData=Object.entries(monthTotals).sort(([a],[b])=>a.localeCompare(b)).slice(-6).map(([label,value])=>({label:label.slice(5),value,currencySym:sym(targetCur)}));
+  const prevTagTotals={};prevRangeTx.filter(t=>t.type==="expense").forEach(t=>{const k=t.tag||"Untagged";prevTagTotals[k]=(prevTagTotals[k]||0)+t.amount;});
+  const catList=Object.entries(tagTotals).map(([tag,amount])=>{
+    const prev=prevTagTotals[tag]||0;
+    const deltaPct=prev>0?Math.round(((amount-prev)/prev)*100):null;
+    return{tag,amount,prev,deltaPct};
+  }).sort((a,b)=>b.amount-a.amount);
+  const maxCatAmount=catList[0]?.amount||1;
+  const movers=catList.filter(c=>c.prev>0&&Math.abs(c.deltaPct)>=10);
+  const biggestMover=movers.length?movers.reduce((a,b)=>Math.abs(b.amount-b.prev)>Math.abs(a.amount-a.prev)?b:a):null;
+
+  const nwFirst=netWorthTrend?.[0]?.value;
+  const nwLast=netWorthTrend?.[netWorthTrend.length-1]?.value;
+  const nwDeltaPct=(netWorthTrend&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
+
+  const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
 
   return(
     <div>
@@ -1174,14 +1229,72 @@ function AnalyticsSection({banks,prefs,setPrefs}){
       </div>}
       {loading&&!showRateError&&<div style={{color:T.faint,textAlign:"center",padding:16,fontSize:13}}>Converting…</div>}
       {!loading&&<>
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:16}}>
-          <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #10B98133"}}><div style={{fontSize:12,color:T.subtext}}>Income</div><div style={{fontSize:22,fontWeight:700,color:"#10B981"}}>{sym(targetCur)}{fmtNum(income)}</div></div>
-          <div style={{background:T.card,borderRadius:12,padding:16,border:"1px solid #ef444433"}}><div style={{fontSize:12,color:T.subtext}}>Expense</div><div style={{fontSize:22,fontWeight:700,color:"#ef4444"}}>{sym(targetCur)}{fmtNum(expense)}</div></div>
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:14,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Net Worth Trend</div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:10}}>Reconstructed from transaction &amp; investment history{isAll?" · converted at today's rates":""} — not exact, but directional</div>
+          {netWorthTrend&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:6}}>
+            <div style={{fontSize:22,fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(nwLast)}</div>
+            {nwDeltaPct!==null&&<div style={{fontSize:12,fontWeight:700,color:nwDeltaPct>=0?"#10B981":"#ef4444",background:nwDeltaPct>=0?"#10B98118":"#ef444418",padding:"3px 8px",borderRadius:6}}>{nwDeltaPct>=0?"▲":"▼"} {Math.abs(nwDeltaPct)}% / 6mo</div>}
+          </div>}
+          <LineAreaChart data={netWorthTrend} color="#3B82F6"/>
         </div>
-        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,textAlign:"center"}}><span style={{fontSize:12,color:T.subtext}}>Net: </span><span style={{fontSize:16,fontWeight:700,color:income-expense>=0?"#10B981":"#ef4444"}}>{sym(targetCur)}{fmtNum(income-expense)}</span></div>
-        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Income vs Expense</div><PieChart data={[{label:"Income",value:income,currencySym:sym(targetCur)},{label:"Expense",value:expense,currencySym:sym(targetCur)}]}/></div>
-        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:12}}>Spending by Tag</div><PieChart data={pieData}/></div>
-        <div style={{background:T.card,borderRadius:12,padding:16}}><div style={{fontSize:13,fontWeight:600,color:T.text,marginBottom:4}}>📅 Monthly Spending <span style={{fontWeight:400,color:T.faint,fontSize:11}}>(trailing 6 months, independent of the date filter above)</span></div><BarChart data={barData}/></div>
+
+        {biggestMover&&<div style={{display:"flex",gap:10,alignItems:"flex-start",background:"linear-gradient(135deg,#3B82F612,#8B5CF612)",border:"1px solid #8B5CF633",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+          <div style={{fontSize:18,lineHeight:1}}>💡</div>
+          <div style={{fontSize:12.5,color:T.text,lineHeight:1.45}}>
+            <b style={{color:"#8B5CF6"}}>{biggestMover.tag}</b> is {biggestMover.amount>biggestMover.prev?"up":"down"} <b style={{color:"#8B5CF6"}}>{Math.abs(biggestMover.deltaPct)}%</b> vs the previous period ({sym(targetCur)}{fmtNum(biggestMover.prev)} → {sym(targetCur)}{fmtNum(biggestMover.amount)}) — your biggest mover.
+          </div>
+        </div>}
+
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:14,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text,marginBottom:12}}>This Period</div>
+          <div style={{display:"flex",gap:8,marginBottom:income>0?12:0}}>
+            <div style={{flex:1,textAlign:"center"}}><div style={{fontSize:10.5,color:T.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Income</div><div style={{fontSize:16,fontWeight:700,color:"#10B981",fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(income)}</div></div>
+            <div style={{flex:1,textAlign:"center"}}><div style={{fontSize:10.5,color:T.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Expense</div><div style={{fontSize:16,fontWeight:700,color:"#ef4444",fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(expense)}</div></div>
+            <div style={{flex:1,textAlign:"center"}}><div style={{fontSize:10.5,color:T.faint,textTransform:"uppercase",letterSpacing:".04em"}}>Net</div><div style={{fontSize:16,fontWeight:700,color:net>=0?"#10B981":"#ef4444",fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(net)}</div></div>
+          </div>
+          {savingsRate!==null&&<>
+            <div style={{background:T.card2,borderRadius:8,height:8,overflow:"hidden"}}><div style={{background:"linear-gradient(90deg,#10B981,#34d399)",height:"100%",borderRadius:8,width:`${Math.max(0,Math.min(100,savingsRate))}%`}}/></div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.subtext,marginTop:6}}>
+              <span>Saved <b style={{color:T.text}}>{savingsRate}%</b> of income</span>
+              {avgSavingsRate!==null&&<span style={{color:T.faint}}>your avg is {avgSavingsRate}%</span>}
+            </div>
+          </>}
+        </div>
+
+        <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:14,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Where It Goes</div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:10}}>Ranked by spend this period, vs. the period before</div>
+          {catList.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:12}}>No expenses in this period.</div>}
+          {catList.map((c,i)=>(
+            <div key={c.tag} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<catList.length-1?`1px solid ${T.border}`:"none"}}>
+              <div style={{width:9,height:9,borderRadius:"50%",flexShrink:0,background:COLORS_LIST[i%COLORS_LIST.length]}}/>
+              <div style={{fontSize:13,fontWeight:600,color:T.text,width:88,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.tag}</div>
+              <div style={{flex:1,background:T.card2,borderRadius:6,height:6}}><div style={{height:"100%",borderRadius:6,width:`${Math.max(2,(c.amount/maxCatAmount)*100)}%`,background:COLORS_LIST[i%COLORS_LIST.length]}}/></div>
+              <div style={{fontSize:12.5,fontWeight:700,width:84,textAlign:"right",flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(c.amount)}</div>
+              <div style={{fontSize:10.5,fontWeight:700,width:40,textAlign:"right",flexShrink:0,color:c.deltaPct===null?T.faint:c.deltaPct>0?"#ef4444":"#10B981"}}>{c.deltaPct===null?(c.prev===0&&c.amount>0?"New":"–"):`${c.deltaPct>0?"▲":"▼"}${Math.abs(c.deltaPct)}%`}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{background:T.card,borderRadius:12,padding:16,border:`1px solid ${T.border}`}}>
+          <div style={{fontSize:13,fontWeight:700,color:T.text}}>Goals</div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:12}}>Envelopes with a savings goal set — across all banks and currencies</div>
+          {allGoalEnvelopes.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:8}}>No goals set — add one to an envelope in Banks to track it here.</div>}
+          {allGoalEnvelopes.map(e=>{
+            const pct=Math.min(100,Math.round((e.balance/e.goal)*100));
+            const barColor=pct>=90?"#10B981":pct<30?"#F59E0B":"#3B82F6";
+            return(
+              <div key={e.id} style={{marginBottom:14}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:5}}>
+                  <span style={{fontWeight:600,color:T.text}}>{e.emoji||"🗂️"} {e.name}</span>
+                  <span style={{color:T.subtext,fontVariantNumeric:"tabular-nums"}}>{sym(e.currency)}{fmtNum(e.balance)} / {sym(e.currency)}{fmtNum(e.goal)} · {pct}%</span>
+                </div>
+                <div style={{background:T.card2,borderRadius:8,height:9,overflow:"hidden"}}><div style={{height:"100%",borderRadius:8,width:`${pct}%`,background:barColor}}/></div>
+              </div>
+            );
+          })}
+        </div>
       </>}
     </div>
   );
