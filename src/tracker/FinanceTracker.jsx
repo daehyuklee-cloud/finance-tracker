@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.13.0";
+const VERSION = "v5.13.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1550,7 +1550,6 @@ function BanksByCurrency({banks,hideTotals}){
             <div key={currency} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:14}}>
               <div style={{fontSize:11,color:T.subtext,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><span style={{width:8,height:8,borderRadius:"50%",background:c,flexShrink:0}}/>{currency} · {cBanks.length} account{cBanks.length!==1?"s":""}</div>
               <div style={{fontSize:19,fontWeight:700,color:T.text}}>{hideTotals?"••••••":`${sym(currency)}${fmtNum(total)}`}</div>
-              <div style={{fontSize:11,color:T.faint,marginTop:3,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cBanks.map(b=>b.name).join(" · ")}</div>
             </div>
           );
         })}
