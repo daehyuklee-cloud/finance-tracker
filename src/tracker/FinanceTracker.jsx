@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.14.2";
+const VERSION = "v5.15.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1709,7 +1709,56 @@ function ObservationBanner({banks}){
     </div>
   );
 }
-function Dashboard({banks,investments,overviewCur,setOverviewCur,hideTotals,setHideTotals}){
+function PinnedBudgetsSection({banks,setBanks,tags,pinnedBudgets}){
+  const items=(pinnedBudgets||[]).map(key=>{
+    const[bankId,envId]=key.split(":");
+    const bank=banks.find(b=>String(b.id)===String(bankId));
+    const env=bank?.envelopes.find(e=>String(e.id)===String(envId));
+    return env?{bank,env,key}:null;
+  }).filter(Boolean);
+  const[showAddFor,setShowAddFor]=useState(null);
+  const[tx,setTx]=useState({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+  if(items.length===0)return null;
+  const addTx=()=>{
+    const amt=parseFloat(tx.amount);
+    const isIncome=tx.type==="income";
+    const newTx={id:Date.now(),...tx,amount:amt};
+    const{bank,env}=showAddFor;
+    setBanks(bs=>bs.map(b=>String(b.id)!==String(bank.id)?b:{...b,balance:r2(b.balance+(isIncome?amt:-amt)),envelopes:b.envelopes.map(e=>String(e.id)!==String(env.id)?e:{...e,balance:r2(e.balance+(isIncome?amt:-amt)),transactions:[newTx,...e.transactions]})}));
+    setTx({type:"expense",desc:"",amount:"",tag:"",note:"",date:localDateStr()});
+    setShowAddFor(null);
+    toast("success","Transaction added.");
+  };
+  return(
+    <div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>Budgets</div>
+      {items.map(({bank,env,key})=>{
+        const spent=envelopeMonthSpend(env);
+        const pct=Math.min(100,Math.round((spent/env.budget)*100));
+        const over=spent>env.budget;
+        const rem=env.budget-spent;
+        const days=daysLeftInMonth();
+        const perDay=!over&&days>0?rem/days:null;
+        const barColor=over?"#ef4444":pct>=80?"#F59E0B":"#10B981";
+        return(
+          <div key={key} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:14,marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div><div style={{fontSize:13.5,fontWeight:700,color:T.text}}>{env.emoji||"🗂️"} {env.name}</div><div style={{fontSize:11,color:T.faint,marginTop:1}}>{bank.name} · {bank.currency}</div></div>
+              <button onClick={()=>setShowAddFor({bank,env})} style={{width:30,height:30,borderRadius:9,border:"none",background:bankColor(bank),color:"#fff",fontSize:17,fontWeight:700,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+            </div>
+            <div style={{background:T.card2,borderRadius:8,height:8,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",borderRadius:8,background:barColor}}/></div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:over?"#ef4444":T.subtext,fontWeight:over?700:400,marginTop:6}}>
+              <span>{sym(bank.currency)}{fmtNum(spent)} of {sym(bank.currency)}{fmtNum(env.budget)}{over?` — ${sym(bank.currency)}${fmtNum(Math.abs(rem))} over`:""}</span>
+              <span style={{color:T.faint,fontWeight:400}}>{perDay!==null?`${sym(bank.currency)}${fmtNum(perDay)}/day · `:""}{days} day{days!==1?"s":""} left</span>
+            </div>
+          </div>
+        );
+      })}
+      {showAddFor&&<AddTxModal envName={showAddFor.env.name} tx={tx} setTx={setTx} tags={tags} color={bankColor(showAddFor.bank)} onAdd={addTx} onClose={()=>setShowAddFor(null)}/>}
+    </div>
+  );
+}
+function Dashboard({banks,setBanks,tags,investments,overviewCur,setOverviewCur,hideTotals,setHideTotals,pinnedBudgets}){
   return(
     <div>
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:8}}>
@@ -1719,6 +1768,7 @@ function Dashboard({banks,investments,overviewCur,setOverviewCur,hideTotals,setH
       </div>
       <UniversalTotal banks={banks} investments={investments} target={overviewCur} setTarget={setOverviewCur} hideTotals={hideTotals}/>
       <ObservationBanner banks={banks}/>
+      <PinnedBudgetsSection banks={banks} setBanks={setBanks} tags={tags} pinnedBudgets={pinnedBudgets}/>
       <BanksByCurrency banks={banks} hideTotals={hideTotals}/>
       <InvestmentsByBucket investments={investments} overviewCur={overviewCur} hideTotals={hideTotals}/>
     </div>
@@ -1773,7 +1823,37 @@ function LockSettingsCard({userId,userEmail}){
     </div>
   );
 }
-function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,userId,userEmail,getData,onImport,onSignOut}){
+const MAX_PINNED_BUDGETS=4;
+function budgetKey(bankId,envId){return `${bankId}:${envId}`;}
+function PinnedBudgetsCard({banks,pinnedBudgets,setPinnedBudgets}){
+  const budgeted=banks.flatMap(b=>b.envelopes.filter(e=>e.budget>0).map(e=>({bank:b,env:e,key:budgetKey(b.id,e.id)})));
+  const toggle=key=>{
+    const on=pinnedBudgets.includes(key);
+    if(!on&&pinnedBudgets.length>=MAX_PINNED_BUDGETS){toast("error",`You can pin up to ${MAX_PINNED_BUDGETS} budgets — unpin one first.`);return;}
+    setPinnedBudgets(on?pinnedBudgets.filter(k=>k!==key):[...pinnedBudgets,key]);
+  };
+  return(
+    <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${T.border}`}}>
+      <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:4}}>📌 Pinned Budgets</div>
+      <div style={{fontSize:12,color:T.subtext,marginBottom:12}}>Pick up to {MAX_PINNED_BUDGETS} budgets to show front and center on your Dashboard, with a quick-add button for each.</div>
+      {budgeted.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:12}}>No envelopes have a monthly budget yet — set one in Banks first.</div>}
+      {budgeted.map(({bank,env,key})=>{
+        const on=pinnedBudgets.includes(key);
+        return(
+          <label key={key} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:`1px solid ${T.border}`,cursor:"pointer"}}>
+            <input type="checkbox" checked={on} onChange={()=>toggle(key)}/>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13.5,fontWeight:600,color:T.text}}>{env.emoji||"🗂️"} {env.name}</div>
+              <div style={{fontSize:11,color:T.faint,marginTop:1}}>{bank.name}</div>
+            </div>
+            <div style={{fontSize:12,color:T.subtext,flexShrink:0}}>{sym(bank.currency)}{fmtNum(env.budget)}/mo</div>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,profile,setProfile,googleName,googlePhoto,userId,userEmail,pinnedBudgets,setPinnedBudgets,getData,onImport,onSignOut}){
   const[newTag,setNewTag]=useState("");
   const[confirmDelTag,setConfirmDelTag]=useState(null);
   const[pendingImport,setPendingImport]=useState(null);
@@ -1807,6 +1887,7 @@ function SettingsSection({tags,setTags,banks,theme,setTheme,appName,setAppName,p
         <Inp label="Display Name (blank uses Google)" value={profile.name} onChange={e=>setProfile(p=>({...p,name:e.target.value}))} placeholder={googleName||"Your name"}/>
         <div style={{fontSize:12,color:T.faint}}>Showing as: <strong style={{color:T.text}}>{displayName||"—"}</strong></div>
       </div>
+      <PinnedBudgetsCard banks={banks} pinnedBudgets={pinnedBudgets} setPinnedBudgets={setPinnedBudgets}/>
       <LockSettingsCard userId={userId} userEmail={userEmail}/>
       <div style={card}>
         <div style={{fontSize:14,fontWeight:700,color:T.text,marginBottom:12}}>🎨 Appearance</div>
@@ -1863,6 +1944,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
   const[overviewCur,setOverviewCur]=useState("USD");
   const[hideTotals,setHideTotals]=useState(false);
   const[analyticsPrefs,setAnalyticsPrefs]=useState({currency:null,accounts:null});
+  const[pinnedBudgets,setPinnedBudgets]=useState([]);
   const[syncStatus,setSyncStatus]=useState("loading");
   const isOnline=useOnlineStatus();
   const saveTimerRef=useRef(null);
@@ -1889,6 +1971,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
         if(data.overviewCur)setOverviewCur(data.overviewCur);
         if(data.hideTotals!==undefined)setHideTotals(data.hideTotals);
         if(data.analyticsPrefs)setAnalyticsPrefs(data.analyticsPrefs);
+        if(Array.isArray(data.pinnedBudgets))setPinnedBudgets(data.pinnedBudgets);
       }
       setSyncStatus("saved");
       initialLoadDone.current=true;
@@ -1898,17 +1981,17 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
-    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
+    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets});
     setSyncStatus("saving");
     if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
     saveTimerRef.current=setTimeout(async()=>{
-      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
+      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets});
       if(result==="synced")setSyncStatus("saved");
       else if(result==="queued-offline")setSyncStatus("offline");
       else{setSyncStatus("error");toast("error","Couldn't reach the server — saved on this device and will sync once it's back.");}
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
-  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,userId,isOnline]);
+  },[banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets,userId,isOnline]);
 
   useEffect(()=>{
     const flushPendingSave=()=>{
@@ -1951,8 +2034,9 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
     if(p.overviewCur)setOverviewCur(p.overviewCur);
     if(p.hideTotals!==undefined)setHideTotals(p.hideTotals);
     if(p.analyticsPrefs)setAnalyticsPrefs(p.analyticsPrefs);
+    if(Array.isArray(p.pinnedBudgets))setPinnedBudgets(p.pinnedBudgets);
   };
-  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs});
+  const getData=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets});
   const TAB_COLORS=["#3B82F6","#3B82F6","#8B5CF6","#06B6D4","#10B981","#64748B"];
 
   return(
@@ -1975,12 +2059,12 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
           {TABS.map((t,i)=>(<button key={t} onClick={()=>setTab(i)} style={{background:tab===i?TAB_COLORS[i]:T.card,color:tab===i?"#fff":T.subtext,border:"none",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:13,fontWeight:500,whiteSpace:"nowrap"}}>{t}</button>))}
         </div>
         {syncStatus==="loading"?<DashboardSkeleton/>:<>
-        {tab===0&&<Dashboard banks={banks} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals}/>}
+        {tab===0&&<Dashboard banks={banks} setBanks={setBanks} tags={tags} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals} pinnedBudgets={pinnedBudgets}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
         {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
-        {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
+        {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} pinnedBudgets={pinnedBudgets} setPinnedBudgets={setPinnedBudgets} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
       </div>
     </div>
