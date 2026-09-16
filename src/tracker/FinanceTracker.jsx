@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.16.0";
+const VERSION = "v5.16.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -796,16 +796,16 @@ function BanksSection({banks,setBanks,tags}){
 
   return(
     <div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
+      <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
           <span style={{fontSize:18,fontWeight:700,color:T.text}}>All Banks</span>
           <select value={globalConv} onChange={e=>setGlobalConv(e.target.value)} style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 8px",color:T.faint,fontSize:12}}>
             <option value="">Convert →</option>{CURRENCY_LIST.map(c=><option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-        <div style={{display:"flex",gap:8}}>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
           <Btn small outline color={T.subtext} onClick={()=>{setShowAllHist(true);setAllHistVisible(HIST_PAGE_SIZE);}}>📄 All Transactions</Btn>
-          <Btn color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn>
+          <Btn small color="#3B82F6" onClick={()=>setShowBank(true)}>+ Add Bank</Btn>
         </div>
       </div>
       {banks.length===0&&<div style={{color:T.faint,textAlign:"center",padding:32}}>No banks yet.</div>}

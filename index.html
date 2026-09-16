@@ -13,6 +13,13 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>acountee</title>
     <style>
+      /* Mobile Safari/WebKit auto-inflates text size in narrow flex/table
+         children unless told not to — invisible in desktop dev tools, but
+         on a real phone it makes buttons and labels render noticeably
+         bigger than their CSS says, which is what breaks the layout on
+         real devices while looking fine in every preview we can run here. */
+      html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
+      body{overflow-x:hidden;}
       button{transition:transform .12s ease,opacity .12s ease,background-color .15s ease,border-color .15s ease;min-height:32px;min-width:32px;}
       button:active:not(:disabled){transform:scale(0.96);}
       button:disabled{transition:none;}
