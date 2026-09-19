@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.16.4";
+const VERSION = "v5.17.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -652,9 +652,16 @@ function EnvelopeView({bank,bankId,setBanks,tags}){
   );
 }
 
-function BanksSection({banks,setBanks,tags}){
+function BanksSection({banks,setBanks,tags,focusBank,clearFocusBank}){
   const[showBank,setShowBank]=useState(false);
   const[expandedSet,setExpandedSet]=useState({});
+  useEffect(()=>{
+    if(!focusBank)return;
+    setExpandedSet(s=>({...s,[focusBank]:true}));
+    const t=setTimeout(()=>{document.getElementById(`bank-${focusBank}`)?.scrollIntoView({behavior:"smooth",block:"start"});clearFocusBank?.();},60);
+    return()=>clearTimeout(t);
+  // eslint-disable-next-line
+  },[focusBank]);
   const[editBank,setEditBank]=useState(null);
   const[confirmDel,setConfirmDel]=useState(null);
   const[transferBank,setTransferBank]=useState(null);
@@ -823,7 +830,7 @@ function BanksSection({banks,setBanks,tags}){
               {cBanks.map(bk=>{
                 const color=bankColor(bk);
                 return(
-                  <div key={bk.id} style={{background:T.card,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden"}}>
+                  <div key={bk.id} id={`bank-${bk.id}`} style={{background:T.card,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden",scrollMarginTop:12}}>
                     <div style={{padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:4,height:36,borderRadius:2,background:color}}/>
@@ -1200,7 +1207,7 @@ function shiftPeriod(from,to){
   const prevFrom=new Date(prevTo.getTime()-(lenDays-1)*86400000);
   return{prevFrom:prevFrom.toISOString().slice(0,10),prevTo:prevTo.toISOString().slice(0,10)};
 }
-function AnalyticsSection({banks,prefs,setPrefs}){
+function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
   const today=new Date();
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
@@ -1278,7 +1285,7 @@ function AnalyticsSection({banks,prefs,setPrefs}){
   const nwLast=netWorthTrend?.[netWorthTrend.length-1]?.value;
   const nwDeltaPct=(netWorthTrend&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
 
-  const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
+  const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency,bankId:b.id,bankName:b.name}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
 
   return(
     <div>
@@ -1383,10 +1390,13 @@ function AnalyticsSection({banks,prefs,setPrefs}){
             const pct=Math.min(100,Math.round((e.balance/e.goal)*100));
             const barColor=pct>=90?"#10B981":pct<30?"#F59E0B":"#3B82F6";
             return(
-              <div key={e.id} style={{marginBottom:14}}>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:12.5,marginBottom:5}}>
-                  <span style={{fontWeight:600,color:T.text}}>{e.emoji||"🗂️"} {e.name}</span>
-                  <span style={{color:T.subtext,fontVariantNumeric:"tabular-nums"}}>{sym(e.currency)}{fmtNum(e.balance)} / {sym(e.currency)}{fmtNum(e.goal)} · {pct}%</span>
+              <div key={`${e.bankId}-${e.id}`} onClick={()=>onOpenBank?.(e.bankId)} role="button" tabIndex={0} onKeyDown={ev=>{if(ev.key==="Enter")onOpenBank?.(e.bankId);}} style={{marginBottom:14,cursor:"pointer"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,fontSize:12.5,marginBottom:5}}>
+                  <div style={{minWidth:0}}>
+                    <div style={{fontWeight:600,color:T.text}}>{e.emoji||"🗂️"} {e.name}</div>
+                    <div style={{fontSize:11,color:T.faint,marginTop:1}}>{e.bankName} ›</div>
+                  </div>
+                  <span style={{color:T.subtext,fontVariantNumeric:"tabular-nums",textAlign:"right",flexShrink:0}}>{sym(e.currency)}{fmtNum(e.balance)} / {sym(e.currency)}{fmtNum(e.goal)} · {pct}%</span>
                 </div>
                 <div style={{background:T.card2,borderRadius:8,height:9,overflow:"hidden"}}><div style={{height:"100%",borderRadius:8,width:`${pct}%`,background:barColor}}/></div>
               </div>
@@ -1991,6 +2001,8 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
   const[hideTotals,setHideTotals]=useState(false);
   const[analyticsPrefs,setAnalyticsPrefs]=useState({currency:null,accounts:null});
   const[pinnedBudgets,setPinnedBudgets]=useState([]);
+  const[focusBank,setFocusBank]=useState(null);
+  const openBank=bankId=>{setFocusBank(String(bankId));setTab(1);};
   const[dashboardOrder,setDashboardOrder]=useState(DEFAULT_DASHBOARD_ORDER);
   const[syncStatus,setSyncStatus]=useState("loading");
   const isOnline=useOnlineStatus();
@@ -2109,9 +2121,9 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
         </div>
         {syncStatus==="loading"?<DashboardSkeleton/>:<>
         {tab===0&&<Dashboard banks={banks} setBanks={setBanks} tags={tags} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals} pinnedBudgets={pinnedBudgets} dashboardOrder={dashboardOrder}/>}
-        {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags}/>}
+        {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags} focusBank={focusBank} clearFocusBank={()=>setFocusBank(null)}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
-        {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs}/>}
+        {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs} onOpenBank={openBank}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
         {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} pinnedBudgets={pinnedBudgets} setPinnedBudgets={setPinnedBudgets} dashboardOrder={dashboardOrder} setDashboardOrder={setDashboardOrder} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
