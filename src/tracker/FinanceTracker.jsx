@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.16.1";
+const VERSION = "v5.16.2";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1747,9 +1747,12 @@ function PinnedBudgetsSection({banks,setBanks,tags,pinnedBudgets}){
               <button onClick={()=>setShowAddFor({bank,env})} style={{width:30,height:30,borderRadius:9,border:"none",background:bankColor(bank),color:"#fff",fontSize:17,fontWeight:700,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
             </div>
             <div style={{background:T.card2,borderRadius:8,height:8,overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",borderRadius:8,background:barColor}}/></div>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:over?"#ef4444":T.subtext,fontWeight:over?700:400,marginTop:6}}>
-              <span>{sym(bank.currency)}{fmtNum(spent)} of {sym(bank.currency)}{fmtNum(env.budget)}{over?` — ${sym(bank.currency)}${fmtNum(Math.abs(rem))} over`:""}</span>
-              <span style={{color:T.faint,fontWeight:400}}>{perDay!==null?`${sym(bank.currency)}${fmtNum(perDay)}/day · `:""}{days} day{days!==1?"s":""} left</span>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginTop:8}}>
+              <span style={{fontSize:15,fontWeight:700,color:over?"#ef4444":T.text,fontVariantNumeric:"tabular-nums"}}>{over?`${sym(bank.currency)}${fmtNum(Math.abs(rem))} over`:`${sym(bank.currency)}${fmtNum(rem)} left`}</span>
+              <span style={{fontSize:11,color:T.faint}}>of {sym(bank.currency)}{fmtNum(env.budget)}</span>
+            </div>
+            <div style={{fontSize:11,color:T.faint,marginTop:3}}>
+              {perDay!==null?`${sym(bank.currency)}${fmtNum(perDay)}/day · `:""}{perDay!==null&&days>=7?`${sym(bank.currency)}${fmtNum(perDay*7)}/week · `:""}{days} day{days!==1?"s":""} left
             </div>
           </div>
         );
