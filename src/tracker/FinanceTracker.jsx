@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.18.0";
+const VERSION = "v5.18.1";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1174,9 +1174,10 @@ function LineAreaChart({data,color="#3B82F6"}){
 // mode it converts every point at TODAY's rate rather than the rate on
 // that historical date (no historical-FX source available) — both are
 // disclosed in the UI rather than presented as exact.
-function useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick){
+function useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick,investments){
   const[trend,setTrend]=useState(null);
-  const key=JSON.stringify(scopedBanks.map(b=>({c:b.currency,bal:bankTotal(b),tx:b.envelopes.flatMap(e=>e.transactions.map(t=>[t.date,t.type,t.amount]))})));
+  const invItems=(investments||[]).flatMap(inv=>(inv.items||[]).filter(it=>isAll||it.currency===targetCur).map(it=>({currency:it.currency,value:it.value,history:it.history||[]})));
+  const key=JSON.stringify([scopedBanks.map(b=>({c:b.currency,bal:bankTotal(b),tx:b.envelopes.flatMap(e=>e.transactions.map(t=>[t.date,t.type,t.amount]))})),invItems]);
   useEffect(()=>{
     let active=true;
     (async()=>{
@@ -1187,13 +1188,27 @@ function useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick){
       const currentItems=scopedBanks.map(b=>({amount:bankTotal(b),currency:b.currency}));
       const txItems=scopedBanks.flatMap(b=>b.envelopes.flatMap(e=>e.transactions.map(t=>({date:t.date,amount:t.type==="income"?t.amount:-t.amount,currency:b.currency}))));
       let convCurrentTotal=0,convTx=txItems,ok=true;
+      const rateFor=async cur=>isAll?await fetchRate(cur,targetCur):1;
       if(isAll){
-        for(const it of currentItems){const r=await fetchRate(it.currency,targetCur);if(r===null){ok=false;break;}convCurrentTotal+=it.amount*r;}
-        if(ok){convTx=[];for(const t of txItems){const r=await fetchRate(t.currency,targetCur);if(r===null){ok=false;break;}convTx.push({...t,amount:t.amount*r});}}
+        for(const it of currentItems){const r=await rateFor(it.currency);if(r===null){ok=false;break;}convCurrentTotal+=it.amount*r;}
+        if(ok){convTx=[];for(const t of txItems){const r=await rateFor(t.currency);if(r===null){ok=false;break;}convTx.push({...t,amount:t.amount*r});}}
       }else convCurrentTotal=currentItems.reduce((s,it)=>s+it.amount,0);
+      // Investments: each holding's value on a date is its latest recorded
+      // history entry on or before that date (0 before it was first
+      // recorded); a holding with no history is assumed flat at today's value.
+      const invRates={};
+      if(ok)for(const it of invItems){if(invRates[it.currency]===undefined){const r=await rateFor(it.currency);if(r===null){ok=false;break;}invRates[it.currency]=r;}}
       if(!active)return;
       if(!ok){setTrend(null);return;}
-      setTrend(cutoffs.map(c=>({label:c.label,value:r2(convCurrentTotal-convTx.filter(t=>t.date>c.date).reduce((s,t)=>s+t.amount,0))})));
+      const valueAt=(it,date,isNow)=>{
+        if(isNow||!it.history.length)return it.value;
+        let v=0,best="";
+        it.history.forEach(h=>{const d=(h.date||"").slice(0,10);if(d<=date&&d>=best){best=d;v=h.value;}});
+        return v;
+      };
+      const banksSeries=cutoffs.map(c=>({label:c.label,value:r2(convCurrentTotal-convTx.filter(t=>t.date>c.date).reduce((s,t)=>s+t.amount,0))}));
+      const invSeries=cutoffs.map((c,i)=>({label:c.label,value:r2(invItems.reduce((s,it)=>s+valueAt(it,c.date,i===cutoffs.length-1)*invRates[it.currency],0))}));
+      setTrend({banks:banksSeries,inv:invSeries,total:banksSeries.map((b,i)=>({label:b.label,value:r2(b.value+invSeries[i].value)}))});
     })();
     return()=>{active=false;};
   // eslint-disable-next-line
@@ -1311,7 +1326,7 @@ function OrganizeUntaggedModal({banks,setBanks,tags,setTags,onClose}){
     </Modal>
   );
 }
-function AnalyticsSection({banks,setBanks,tags,setTags,prefs,setPrefs,onOpenBank}){
+function AnalyticsSection({banks,setBanks,tags,setTags,investments,prefs,setPrefs,onOpenBank}){
   const today=new Date();
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
@@ -1356,7 +1371,9 @@ function AnalyticsSection({banks,setBanks,tags,setTags,prefs,setPrefs,onOpenBank
 
   const rangeConverted=useConvertedItems(isAll?rangeTxRaw:[],targetCur,retryTick);
   const prevRangeConverted=useConvertedItems(isAll?prevRangeTxRaw:[],targetCur,retryTick);
-  const netWorthTrend=useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick);
+  const netWorthTrend=useNetWorthTrend(scopedBanks,isAll,targetCur,retryTick,investments);
+  const[nwView,setNwView]=useState("total");
+  const nwSeries=netWorthTrend?netWorthTrend[nwView]:null;
   const loading=isAll&&(rangeConverted===null||prevRangeConverted===null||netWorthTrend===null);
   const rangeTx=isAll?(rangeConverted||[]):rangeTxRaw;
   const prevRangeTx=isAll?(prevRangeConverted||[]):prevRangeTxRaw;
@@ -1390,9 +1407,9 @@ function AnalyticsSection({banks,setBanks,tags,setTags,prefs,setPrefs,onOpenBank
   const movers=catList.filter(c=>c.prev>0&&Math.abs(c.deltaPct)>=10);
   const biggestMover=movers.length?movers.reduce((a,b)=>Math.abs(b.amount-b.prev)>Math.abs(a.amount-a.prev)?b:a):null;
 
-  const nwFirst=netWorthTrend?.[0]?.value;
-  const nwLast=netWorthTrend?.[netWorthTrend.length-1]?.value;
-  const nwDeltaPct=(netWorthTrend&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
+  const nwFirst=nwSeries?.[0]?.value;
+  const nwLast=nwSeries?.[nwSeries.length-1]?.value;
+  const nwDeltaPct=(nwSeries&&nwFirst!==undefined&&nwFirst!==0)?Math.round(((nwLast-nwFirst)/Math.abs(nwFirst))*100):null;
 
   const allGoalEnvelopes=banks.flatMap(b=>b.envelopes.filter(e=>e.goal>0).map(e=>({...e,currency:b.currency,bankId:b.id,bankName:b.name}))).sort((a,b)=>(b.balance/b.goal)-(a.balance/a.goal));
 
@@ -1452,12 +1469,17 @@ function AnalyticsSection({banks,setBanks,tags,setTags,prefs,setPrefs,onOpenBank
       {!loading&&<>
         <div style={{background:T.card,borderRadius:12,padding:16,marginBottom:14,border:`1px solid ${T.border}`}}>
           <div style={{fontSize:13,fontWeight:700,color:T.text}}>Net Worth Trend</div>
-          <div style={{fontSize:11,color:T.faint,marginBottom:10}}>Reconstructed from transaction &amp; investment history{isAll?" · converted at today's rates":""} — not exact, but directional</div>
-          {netWorthTrend&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:6}}>
+          <div style={{display:"flex",gap:6,margin:"8px 0 10px"}}>
+            {[["total","Total"],["banks","Banks"],["inv","Investments"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setNwView(id)} style={{background:nwView===id?T.text:T.card2,color:nwView===id?T.bg:T.subtext,border:`1px solid ${nwView===id?T.text:T.border}`,borderRadius:8,padding:"4px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>{label}</button>
+            ))}
+          </div>
+          <div style={{fontSize:11,color:T.faint,marginBottom:10}}>{nwView==="banks"?"Reconstructed from your transaction history":nwView==="inv"?"From each holding's recorded value history":"Bank balances plus investment values"}{isAll?" · converted at today's rates":""} — not exact, but directional</div>
+          {nwSeries&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:6}}>
             <div style={{fontSize:22,fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(nwLast)}</div>
             {nwDeltaPct!==null&&<div style={{fontSize:12,fontWeight:700,color:nwDeltaPct>=0?"#10B981":"#ef4444",background:nwDeltaPct>=0?"#10B98118":"#ef444418",padding:"3px 8px",borderRadius:6}}>{nwDeltaPct>=0?"▲":"▼"} {Math.abs(nwDeltaPct)}% / 6mo</div>}
           </div>}
-          <LineAreaChart data={netWorthTrend} color="#3B82F6"/>
+          <LineAreaChart data={nwSeries} color={nwView==="inv"?"#8B5CF6":nwView==="banks"?"#10B981":"#3B82F6"}/>
         </div>
 
         {biggestMover&&<div style={{display:"flex",gap:10,alignItems:"flex-start",background:"linear-gradient(135deg,#3B82F612,#8B5CF612)",border:"1px solid #8B5CF633",borderRadius:12,padding:"12px 14px",marginBottom:14}}>
@@ -2240,7 +2262,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
         {tab===0&&<Dashboard banks={banks} setBanks={setBanks} tags={tags} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals} pinnedBudgets={pinnedBudgets} dashboardOrder={dashboardOrder}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags} focusBank={focusBank} clearFocusBank={()=>setFocusBank(null)}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
-        {tab===3&&<AnalyticsSection banks={banks} setBanks={setBanks} tags={tags} setTags={setTags} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs} onOpenBank={openBank}/>}
+        {tab===3&&<AnalyticsSection banks={banks} setBanks={setBanks} tags={tags} setTags={setTags} investments={investments} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs} onOpenBank={openBank}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
         {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} pinnedBudgets={pinnedBudgets} setPinnedBudgets={setPinnedBudgets} dashboardOrder={dashboardOrder} setDashboardOrder={setDashboardOrder} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
