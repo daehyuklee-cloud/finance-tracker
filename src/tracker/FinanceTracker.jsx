@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.16.2";
+const VERSION = "v5.16.3";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1613,7 +1613,7 @@ function UniversalTotal({banks,investments,target,setTarget,hideTotals}){
   const items=[...banks.map(b=>({amount:bankTotal(b),currency:b.currency})),...investments.flatMap(inv=>(inv.items||[]).map(it=>({amount:it.value,currency:it.currency})))];
   const total=useMultiConvert(items,target);
   return(
-    <div style={{background:"linear-gradient(135deg,#3B82F6,#8B5CF6)",borderRadius:14,padding:20,marginBottom:20,color:"#fff"}}>
+    <div style={{background:"linear-gradient(135deg,#3B82F6,#8B5CF6)",borderRadius:14,padding:20,color:"#fff"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div>
           <div style={{fontSize:13,opacity:0.85}}>Total Net Worth</div>
@@ -1633,13 +1633,13 @@ function BanksByCurrency({banks,hideTotals}){
   const currencies=Object.keys(byCurrency);
   if(currencies.length===0)return(
     <div>
-      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your banks</div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"0 0 10px"}}>In your banks</div>
       <div style={{color:T.faint,textAlign:"center",padding:24,background:T.card,borderRadius:12,border:`1px solid ${T.border}`,fontSize:13}}>No banks yet.</div>
     </div>
   );
   return(
     <div>
-      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your banks</div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"0 0 10px"}}>In your banks</div>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         {currencies.map(currency=>{
           const cBanks=byCurrency[currency];
@@ -1664,13 +1664,13 @@ function InvestmentsByBucket({investments,overviewCur,hideTotals}){
   const grandTotal=useMultiConvert(allItems,overviewCur);
   if(buckets.length===0)return(
     <div>
-      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your investments</div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"0 0 10px"}}>In your investments</div>
       <div style={{color:T.faint,textAlign:"center",padding:24,background:T.card,borderRadius:12,border:`1px solid ${T.border}`,fontSize:13}}>No investments yet.</div>
     </div>
   );
   return(
     <div>
-      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>In your investments</div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"0 0 10px"}}>In your investments</div>
       <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:12,padding:"4px 14px"}}>
         {buckets.map(bucket=>(
           <BucketRow key={bucket} bucket={bucket} items={byBucket[bucket]} overviewCur={overviewCur} hideTotals={hideTotals}/>
@@ -1702,7 +1702,7 @@ function ObservationBanner({banks}){
   if(!obs.length)return null;
   const top=obs[0];
   return(
-    <div style={{display:"flex",gap:10,alignItems:"flex-start",background:top.tone==="warn"?"#F59E0B12":"linear-gradient(135deg,#3B82F612,#8B5CF612)",border:`1px solid ${top.tone==="warn"?"#F59E0B44":"#8B5CF633"}`,borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+    <div style={{display:"flex",gap:10,alignItems:"flex-start",background:top.tone==="warn"?"#F59E0B12":"linear-gradient(135deg,#3B82F612,#8B5CF612)",border:`1px solid ${top.tone==="warn"?"#F59E0B44":"#8B5CF633"}`,borderRadius:12,padding:"12px 14px"}}>
       <div style={{fontSize:17,lineHeight:1}}>{top.icon}</div>
       <div style={{fontSize:12.5,color:T.text,lineHeight:1.45,flex:1}}>{top.text}</div>
       {obs.length>1&&<div style={{fontSize:11,color:T.faint,flexShrink:0,whiteSpace:"nowrap"}}>+{obs.length-1} more in Analytics</div>}
@@ -1731,7 +1731,7 @@ function PinnedBudgetsSection({banks,setBanks,tags,pinnedBudgets}){
   };
   return(
     <div>
-      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"22px 0 10px"}}>Budgets</div>
+      <div style={{fontSize:11,color:T.faint,textTransform:"uppercase",letterSpacing:".06em",fontWeight:700,margin:"0 0 10px"}}>Budgets</div>
       {items.map(({bank,env,key})=>{
         const spent=envelopeMonthSpend(env);
         const pct=Math.min(100,Math.round((spent/env.budget)*100));
@@ -1791,7 +1791,7 @@ function Dashboard({banks,setBanks,tags,investments,overviewCur,setOverviewCur,h
           {hideTotals?"🙈":"🙉"}
         </button>
       </div>
-      {resolveDashboardOrder(dashboardOrder).map(id=><div key={id}>{sections[id]}</div>)}
+      {resolveDashboardOrder(dashboardOrder).map(id=><div key={id} className="dash-sec">{sections[id]}</div>)}
     </div>
   );
 }
