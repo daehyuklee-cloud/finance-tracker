@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.17.0";
+const VERSION = "v5.18.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -1207,7 +1207,111 @@ function shiftPeriod(from,to){
   const prevFrom=new Date(prevTo.getTime()-(lenDays-1)*86400000);
   return{prevFrom:prevFrom.toISOString().slice(0,10),prevTo:prevTo.toISOString().slice(0,10)};
 }
-function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
+const untaggedKey=(bankId,envId,txId)=>`${bankId}:${envId}:${txId}`;
+const normDesc=d=>(d||"").trim().toLowerCase();
+function collectUntagged(banks){
+  const out=[];
+  banks.forEach(b=>b.envelopes.forEach(e=>e.transactions.forEach(t=>{
+    if(t.tag)return;
+    out.push({key:untaggedKey(b.id,e.id,t.id),tx:t,bank:b,env:e});
+  })));
+  return out;
+}
+// Most-used tag per description across everything already tagged — a plain
+// lookup over the user's own history, used to suggest a chip.
+function suggestionMap(banks){
+  const counts={};
+  banks.forEach(b=>b.envelopes.forEach(e=>e.transactions.forEach(t=>{
+    if(!t.tag||t.tag==="Transfer")return;
+    const k=normDesc(t.desc);if(!k)return;
+    counts[k]=counts[k]||{};counts[k][t.tag]=(counts[k][t.tag]||0)+1;
+  })));
+  const out={};
+  Object.entries(counts).forEach(([k,m])=>{out[k]=Object.entries(m).sort((a,b)=>b[1]-a[1])[0][0];});
+  return out;
+}
+function OrganizeUntaggedModal({banks,setBanks,tags,setTags,onClose}){
+  const[queue]=useState(()=>collectUntagged(banks).sort((a,b)=>b.tx.amount-a.tx.amount));
+  const[suggest]=useState(()=>suggestionMap(banks));
+  const[handled,setHandled]=useState(()=>new Set());
+  const[history,setHistory]=useState([]);
+  const[picked,setPicked]=useState(null);
+  const[applyAll,setApplyAll]=useState(true);
+  const[addingNew,setAddingNew]=useState(false);
+  const[newTag,setNewTag]=useState("");
+  const pending=queue.filter(q=>!handled.has(q.key));
+  const cur=pending[0];
+  const total=queue.length;
+  const taggedN=history.filter(h=>!h.skipped).reduce((n,h)=>n+h.keys.length,0);
+  const skippedN=history.filter(h=>h.skipped).length;
+  const similar=cur?pending.filter(q=>q.key!==cur.key&&normDesc(q.tx.desc)===normDesc(cur.tx.desc)):[];
+  const chipTags=tags.filter(t=>t!=="Transfer");
+  const suggested=cur?suggest[normDesc(cur.tx.desc)]:null;
+  const markHandled=keys=>setHandled(h=>{const n=new Set(h);keys.forEach(k=>n.add(k));return n;});
+  const setTagFor=(keys,tag)=>{
+    const ks=new Set(keys);
+    setBanks(bs=>bs.map(b=>({...b,envelopes:b.envelopes.map(e=>({...e,transactions:e.transactions.map(t=>ks.has(untaggedKey(b.id,e.id,t.id))?{...t,tag}:t)}))})));
+  };
+  const ok=()=>{
+    if(!picked)return;
+    const keys=[cur.key,...(applyAll?similar.map(q=>q.key):[])];
+    setTagFor(keys,picked);
+    if(!tags.includes(picked))setTags(t=>[...t,picked]);
+    markHandled(keys);setHistory(h=>[...h,{keys}]);setPicked(null);setAddingNew(false);
+  };
+  const skip=()=>{markHandled([cur.key]);setHistory(h=>[...h,{keys:[cur.key],skipped:true}]);setPicked(null);setAddingNew(false);};
+  const undo=()=>{
+    const last=history[history.length-1];if(!last)return;
+    if(!last.skipped)setTagFor(last.keys,"");
+    setHandled(h=>{const n=new Set(h);last.keys.forEach(k=>n.delete(k));return n;});
+    setHistory(h=>h.slice(0,-1));setPicked(null);
+  };
+  const addNew=()=>{const t=newTag.trim();if(!t)return;setPicked(t);setAddingNew(false);setNewTag("");};
+  const chip=(active,dashed,suggestedChip)=>({border:`1.5px ${dashed?"dashed":"solid"} ${active?"#3B82F6":suggestedChip?"#8B5CF6":T.border}`,background:active?"#3B82F6":T.card2,color:active?"#fff":dashed?T.subtext:T.text,borderRadius:99,padding:"7px 13px",fontSize:13,fontWeight:600,cursor:"pointer"});
+  const curSym=cur?sym(cur.bank.currency):"";
+  return(
+    <Modal title="Organize untagged" onClose={onClose} isDirty={false}>
+      {total===0&&<div style={{textAlign:"center",padding:"20px 0",color:T.subtext,fontSize:14}}>🎉 Nothing untagged — every transaction has a tag.</div>}
+      {total>0&&!cur&&<div style={{textAlign:"center",padding:"12px 0"}}>
+        <div style={{fontSize:36,marginBottom:8}}>🎉</div>
+        <div style={{fontSize:17,fontWeight:800,color:T.text,marginBottom:6}}>All sorted</div>
+        <div style={{fontSize:13,color:T.subtext,lineHeight:1.5,marginBottom:16}}>{taggedN} tagged{skippedN?`, ${skippedN} skipped`:""}.</div>
+        <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+          {history.length>0&&<Btn small outline color={T.subtext} onClick={undo}>↩ Undo last</Btn>}
+          <Btn small color="#3B82F6" onClick={onClose}>Done</Btn>
+        </div>
+      </div>}
+      {cur&&<div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:12,color:T.subtext,marginBottom:6}}><span><b style={{color:T.text}}>{handled.size+1}</b> of {total}</span><span>Biggest first</span></div>
+        <div style={{background:T.card2,borderRadius:8,height:8,overflow:"hidden",marginBottom:16}}><div style={{width:`${(handled.size/total)*100}%`,height:"100%",background:"linear-gradient(90deg,#3B82F6,#8B5CF6)",borderRadius:8,transition:"width .3s ease"}}/></div>
+        <span style={{display:"inline-block",fontSize:10.5,fontWeight:800,letterSpacing:".05em",textTransform:"uppercase",padding:"3px 8px",borderRadius:6,marginBottom:10,background:cur.tx.type==="income"?"#10B98118":"#ef444418",color:cur.tx.type==="income"?"#10B981":"#ef4444"}}>{cur.tx.type==="income"?"Income":"Expense"}</span>
+        <div style={{fontSize:18,fontWeight:800,color:T.text,marginBottom:2,wordBreak:"break-word"}}>{cur.tx.desc||"(no description)"}</div>
+        <div style={{fontSize:22,fontWeight:800,fontVariantNumeric:"tabular-nums",marginBottom:6,color:cur.tx.type==="income"?"#10B981":"#ef4444"}}>{cur.tx.type==="income"?"+":"−"}{curSym}{fmtNum(cur.tx.amount)}</div>
+        <div style={{fontSize:11.5,color:T.faint,lineHeight:1.5,marginBottom:16}}>{cur.bank.name} · {cur.env.name} · {cur.tx.date}{cur.tx.note?` · ${cur.tx.note}`:""}</div>
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:T.subtext,marginBottom:8}}><span>Pick a tag</span>{suggested&&<span style={{color:"#8B5CF6"}}>✨ from your history</span>}</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8,marginBottom:14}}>
+          {chipTags.map(g=><button key={g} onClick={()=>setPicked(g)} style={chip(picked===g,false,g===suggested)}>{g===suggested?"✨ ":""}{g}</button>)}
+          {picked&&!chipTags.includes(picked)&&<button style={chip(true,false,false)}>{picked}</button>}
+          {!addingNew&&<button onClick={()=>setAddingNew(true)} style={chip(false,true,false)}>+ New</button>}
+        </div>
+        {addingNew&&<div style={{display:"flex",gap:8,marginBottom:14}}>
+          <input autoFocus value={newTag} onChange={e=>setNewTag(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addNew()} placeholder="New tag name" style={{flex:1,background:T.input,border:`1px solid ${T.border}`,borderRadius:8,padding:"8px 10px",color:T.text,fontSize:14}}/>
+          <Btn small color="#3B82F6" onClick={addNew}>Add</Btn>
+        </div>}
+        {similar.length>0&&<label style={{display:"flex",alignItems:"center",gap:8,background:T.card2,borderRadius:10,padding:"10px 12px",fontSize:12,color:T.subtext,marginBottom:14,cursor:"pointer"}}>
+          <input type="checkbox" checked={applyAll} onChange={e=>setApplyAll(e.target.checked)}/>
+          <span>Also tag the <b style={{color:T.text}}>{similar.length} other</b> untagged “{cur.tx.desc}” transaction{similar.length!==1?"s":""}</span>
+        </label>}
+        <div style={{display:"flex",gap:8}}>
+          <Btn outline color={T.subtext} onClick={skip} style={{flex:1}}>Skip</Btn>
+          <Btn color="#3B82F6" onClick={ok} disabled={!picked} style={{flex:1,opacity:picked?1:0.4,cursor:picked?"pointer":"not-allowed"}}>OK</Btn>
+        </div>
+        {history.length>0&&<div style={{textAlign:"center",marginTop:12}}><button onClick={undo} style={{background:"none",border:"none",color:T.faint,fontSize:12,cursor:"pointer",textDecoration:"underline"}}>↩ Undo last</button></div>}
+      </div>}
+    </Modal>
+  );
+}
+function AnalyticsSection({banks,setBanks,tags,setTags,prefs,setPrefs,onOpenBank}){
   const today=new Date();
   const firstOfMonth=new Date(today.getFullYear(),today.getMonth(),1).toISOString().slice(0,10);
   const[from,setFrom]=useState(firstOfMonth);
@@ -1215,6 +1319,11 @@ function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
   const[retryTick,setRetryTick]=useState(0);
   const rateHealthy=useRateHealth();
   const allObservations=computeObservations(banks);
+  const[showOrganize,setShowOrganize]=useState(false);
+  const untaggedAll=collectUntagged(banks);
+  const untaggedSpend={},untaggedIncome={};
+  untaggedAll.forEach(({tx,bank})=>{const m=tx.type==="income"?untaggedIncome:untaggedSpend;m[bank.currency]=(m[bank.currency]||0)+tx.amount;});
+  const fmtByCur=m=>Object.entries(m).map(([c,v])=>`${sym(c)}${fmtNum(v)}`).join(" · ");
 
   // Currency-first: pick a native currency and everything computes with zero
   // network dependency (no FX call can ever break it). "All (converted)" is
@@ -1298,6 +1407,13 @@ function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
           </div>
         ))}
       </div>}
+      {untaggedAll.length>0&&<div style={{display:"flex",alignItems:"center",gap:12,background:"#F59E0B14",border:"1px solid #F59E0B55",borderRadius:12,padding:"12px 14px",marginBottom:16}}>
+        <div style={{flex:1,fontSize:12.5,lineHeight:1.4,color:T.text}}>
+          <b style={{color:"#F59E0B"}}>{untaggedAll.length} untagged transaction{untaggedAll.length!==1?"s":""}</b>
+          <div style={{fontSize:11.5,color:T.subtext,marginTop:2}}>{[Object.keys(untaggedSpend).length?`${fmtByCur(untaggedSpend)} spent`:"",Object.keys(untaggedIncome).length?`${fmtByCur(untaggedIncome)} income`:""].filter(Boolean).join(" · ")} with no tag, across all your banks.</div>
+        </div>
+        <Btn small color="#F59E0B" onClick={()=>setShowOrganize(true)}>Organize</Btn>
+      </div>}
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:14}}>
         {currencies.map(c=>(
           <button key={c} onClick={()=>setCurrencyTab(c)} style={{background:currencyTab===c?getCurrencyColor(c):T.card,color:currencyTab===c?"#fff":T.subtext,border:`1px solid ${currencyTab===c?getCurrencyColor(c):T.border}`,borderRadius:8,padding:"6px 14px",cursor:"pointer",fontSize:13,fontWeight:600}}>{c}</button>
@@ -1372,12 +1488,13 @@ function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
           <div style={{fontSize:11,color:T.faint,marginBottom:10}}>Ranked by spend this period, vs. the period before</div>
           {catList.length===0&&<div style={{color:T.faint,fontSize:13,textAlign:"center",padding:12}}>No expenses in this period.</div>}
           {catList.map((c,i)=>(
-            <div key={c.tag} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<catList.length-1?`1px solid ${T.border}`:"none"}}>
+            <div key={c.tag} onClick={c.tag==="Untagged"?()=>setShowOrganize(true):undefined} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:i<catList.length-1?`1px solid ${T.border}`:"none",cursor:c.tag==="Untagged"?"pointer":"default"}}>
               <div style={{width:9,height:9,borderRadius:"50%",flexShrink:0,background:COLORS_LIST[i%COLORS_LIST.length]}}/>
               <div style={{fontSize:13,fontWeight:600,color:T.text,width:88,flexShrink:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.tag}</div>
               <div style={{flex:1,background:T.card2,borderRadius:6,height:6}}><div style={{height:"100%",borderRadius:6,width:`${Math.max(2,(c.amount/maxCatAmount)*100)}%`,background:COLORS_LIST[i%COLORS_LIST.length]}}/></div>
               <div style={{fontSize:12.5,fontWeight:700,width:84,textAlign:"right",flexShrink:0,fontVariantNumeric:"tabular-nums"}}>{sym(targetCur)}{fmtNum(c.amount)}</div>
               <div style={{fontSize:10.5,fontWeight:700,width:40,textAlign:"right",flexShrink:0,color:c.deltaPct===null?T.faint:c.deltaPct>0?"#ef4444":"#10B981"}}>{c.deltaPct===null?(c.prev===0&&c.amount>0?"New":"–"):`${c.deltaPct>0?"▲":"▼"}${Math.abs(c.deltaPct)}%`}</div>
+              {c.tag==="Untagged"&&<div style={{color:T.faint,fontSize:14}}>›</div>}
             </div>
           ))}
         </div>
@@ -1403,8 +1520,8 @@ function AnalyticsSection({banks,prefs,setPrefs,onOpenBank}){
             );
           })}
         </div>
-
       </>}
+      {showOrganize&&<OrganizeUntaggedModal banks={banks} setBanks={setBanks} tags={tags} setTags={setTags} onClose={()=>setShowOrganize(false)}/>}
     </div>
   );
 }
@@ -2123,7 +2240,7 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
         {tab===0&&<Dashboard banks={banks} setBanks={setBanks} tags={tags} investments={investments} overviewCur={overviewCur} setOverviewCur={setOverviewCur} hideTotals={hideTotals} setHideTotals={setHideTotals} pinnedBudgets={pinnedBudgets} dashboardOrder={dashboardOrder}/>}
         {tab===1&&<BanksSection banks={banks} setBanks={setBanks} tags={tags} focusBank={focusBank} clearFocusBank={()=>setFocusBank(null)}/>}
         {tab===2&&<InvestmentsSection investments={investments} setInvestments={setInvestments} hideTotals={hideTotals}/>}
-        {tab===3&&<AnalyticsSection banks={banks} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs} onOpenBank={openBank}/>}
+        {tab===3&&<AnalyticsSection banks={banks} setBanks={setBanks} tags={tags} setTags={setTags} prefs={analyticsPrefs} setPrefs={setAnalyticsPrefs} onOpenBank={openBank}/>}
         {tab===4&&<NotesSection notesState={notesState}/>}
         {tab===5&&<SettingsSection tags={tags} setTags={setTags} banks={banks} theme={theme} setTheme={setTheme} appName={appName} setAppName={setAppName} profile={profile} setProfile={setProfile} googleName={userName} googlePhoto={userPhoto} userId={userId} userEmail={userEmail} pinnedBudgets={pinnedBudgets} setPinnedBudgets={setPinnedBudgets} dashboardOrder={dashboardOrder} setDashboardOrder={setDashboardOrder} getData={getData} onImport={importBackup} onSignOut={onSignOut}/>}
         </>}
