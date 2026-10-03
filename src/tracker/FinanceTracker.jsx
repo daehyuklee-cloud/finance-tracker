@@ -13,7 +13,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.18.1";
+const VERSION = "v5.19.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -265,7 +265,7 @@ function makeBank(name,currency,balance,color){
 function bankTotal(bank){return(bank.envelopes||[]).reduce((s,e)=>s+e.balance,0);}
 function envelopeMonthSpend(env){
   const monthKey=localDateStr().slice(0,7);
-  return(env.transactions||[]).filter(t=>t.type==="expense"&&t.date&&t.date.slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
+  return(env.transactions||[]).filter(t=>t.type==="expense"&&!t.excludeFromBudget&&t.date&&t.date.slice(0,7)===monthKey).reduce((s,t)=>s+t.amount,0);
 }
 function daysLeftInMonth(){
   const now=new Date();
@@ -305,7 +305,7 @@ function computeObservations(banks){
       // repeats every remaining day produces a nonsense number. Also cap
       // the extrapolation multiplier itself so early-month noise doesn't
       // get amplified into a dramatic-looking percentage.
-      const monthExpenses=e.transactions.filter(t=>t.type==="expense"&&t.date?.slice(0,7)===monthKey);
+      const monthExpenses=e.transactions.filter(t=>t.type==="expense"&&!t.excludeFromBudget&&t.date?.slice(0,7)===monthKey);
       const patternDays=new Set(monthExpenses.map(t=>t.date)).size;
       if(e.budget&&patternDays>=2&&dayOfMonth>=Math.max(10,Math.round(daysInMonth/3))){
         const spent=monthExpenses.reduce((s,t)=>s+t.amount,0);
@@ -402,6 +402,10 @@ function TxEditModal({tx,tags,onSave,onClose}){
       <Sel label="Tag" value={form.tag||""} onChange={e=>setForm(f=>({...f,tag:e.target.value}))}><option value="">No tag</option>{(tags||[]).map(t=><option key={t} value={t}>{t}</option>)}</Sel>
       <Inp label="Note" value={form.note||""} onChange={e=>setForm(f=>({...f,note:e.target.value}))}/>
       <Inp label="Date" type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}/>
+      {form.tag==="Transfer"&&form.type==="expense"&&<label style={{display:"flex",alignItems:"center",gap:8,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:12,color:T.subtext,cursor:"pointer"}}>
+        <input type="checkbox" checked={!form.excludeFromBudget} onChange={e=>setForm(f=>{const n={...f};if(e.target.checked)delete n.excludeFromBudget;else n.excludeFromBudget=true;return n;})}/>
+        <span>Count this against the envelope's monthly budget</span>
+      </label>}
       <Btn color="#3B82F6" onClick={submit} style={{width:"100%"}}>Save Changes</Btn>
     </Modal>
   );
@@ -417,8 +421,14 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
   const[fee,setFee]=useState("");
   const[received,setReceived]=useState("");
   const[err,setErr]=useState("");
+  const[countInBudget,setCountInBudget]=useState(null);
   const srcEnvs=bank.envelopes||[];
   const toExternal=toBank==="external";
+  // Default: moving money between your own envelopes/accounts isn't spending,
+  // so it doesn't count against the budget; sending to an External account
+  // is real money leaving, so it does. Either way it's a one-tap override.
+  const effectiveCount=countInBudget===null?toExternal:countInBudget;
+  const srcEnvPicked=srcEnvs.find(e=>String(e.id)===String(fromEnvId));
   const destBank=toExternal?null:allBanks.find(b=>String(b.id)===String(toBank));
   const destEnvs=destBank?.envelopes||[];
   const isCross=!fromExternal&&!toExternal&&destBank&&destBank.currency!==bank.currency;
@@ -444,7 +454,7 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
     }
     const rec=isCross?(parseFloat(received)||0):a;
     if(isCross&&!rec){setErr("Please enter the amount received in the destination currency.");return;}
-    onTransfer({fromExternal,toExternal,srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:toExternal?bank.currency:destBank.currency});
+    onTransfer({fromExternal,toExternal,srcEnv,destEnv,destBank,amt:a,fee:f,received:rec,isCross,srcCurrency:bank.currency,destCurrency:toExternal?bank.currency:destBank.currency,excludeFromBudget:!fromExternal&&!effectiveCount});
     onClose();
   };
   return(
@@ -483,6 +493,10 @@ function TransferModal({bank,allBanks,onClose,onTransfer}){
           <div style={{marginTop:fromExternal?0:4}}>Destination receives: <strong style={{color:"#10B981"}}>{isCross?(received?`${sym(destBank?.currency)}${fmtNum(parseFloat(received)||0)}`:"—"):`${sym(bank.currency)}${fmtNum(parseFloat(amt)||0)}`}</strong></div>
         </div>
       )}
+      {!fromExternal&&srcEnvPicked?.budget>0&&<label style={{display:"flex",alignItems:"flex-start",gap:8,background:T.card2,borderRadius:8,padding:"10px 12px",marginBottom:12,fontSize:12,color:T.subtext,cursor:"pointer",lineHeight:1.4}}>
+        <input type="checkbox" checked={effectiveCount} onChange={e=>setCountInBudget(e.target.checked)} style={{marginTop:2}}/>
+        <span>Count this against <b style={{color:T.text}}>{srcEnvPicked.name}</b>'s monthly budget<br/><span style={{color:T.faint}}>{effectiveCount?"It will show up as spending in that budget.":"It won't change that budget's spent or remaining."}</span></span>
+      </label>}
       <FormError msg={err}/>
       <Btn color={color} onClick={doTransfer} style={{width:"100%"}}>Confirm Transfer</Btn>
     </Modal>
@@ -698,7 +712,7 @@ function BanksSection({banks,setBanks,tags,focusBank,clearFocusBank}){
     setEditBank(null);
   };
   const delBank=id=>{setBanks(b=>b.filter(x=>x.id!==id));setConfirmDel(null);};
-  const doTransfer=({fromExternal,toExternal,srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency})=>{
+  const doTransfer=({fromExternal,toExternal,srcEnv,destEnv,destBank,amt,fee,received,isCross,srcCurrency,destCurrency,excludeFromBudget})=>{
     const date=localDateStr();
     if(fromExternal){
       const destTx={id:Date.now(),type:"income",desc:"Received from External account",amount:received,tag:"Transfer",note:"",date};
@@ -709,7 +723,7 @@ function BanksSection({banks,setBanks,tags,focusBank,clearFocusBank}){
     }
     if(toExternal){
       const totalDeducted=amt+fee;
-      const srcTx={id:Date.now(),type:"expense",desc:`Sent to External account${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
+      const srcTx={id:Date.now(),type:"expense",desc:`Sent to External account${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date,...(excludeFromBudget?{excludeFromBudget:true}:{})};
       const srcBankId=transferBank.id;
       setBanks(bs=>bs.map(b=>String(b.id)===String(srcBankId)?{...b,balance:r2(b.balance-totalDeducted),envelopes:b.envelopes.map(e=>String(e.id)===String(srcEnv.id)?{...e,balance:r2(e.balance-totalDeducted),transactions:[srcTx,...e.transactions]}:e)}:b));
       setTransferBank(null);
@@ -719,7 +733,7 @@ function BanksSection({banks,setBanks,tags,focusBank,clearFocusBank}){
     const totalDeducted=amt+fee;
     const srcBankId=transferBank.id;
     const destBankId=destBank.id;
-    const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date};
+    const srcTx={id:Date.now(),type:"expense",desc:`Transfer to ${destBank.name}${isCross?` · ${sym(destCurrency)}${fmtNum(received)} received`:""}${fee?` · ${sym(srcCurrency)}${fmtNum(fee)} fee`:""}`,amount:totalDeducted,tag:"Transfer",note:"",date,...(excludeFromBudget?{excludeFromBudget:true}:{})};
     const destTx={id:Date.now()+1,type:"income",desc:`Transfer from ${transferBank.name}${isCross?` · ${sym(srcCurrency)}${fmtNum(amt)} sent`:""}`,amount:received,tag:"Transfer",note:"",date};
     const sameBank=String(srcBankId)===String(destBankId);
     setBanks(bs=>bs.map(b=>{
