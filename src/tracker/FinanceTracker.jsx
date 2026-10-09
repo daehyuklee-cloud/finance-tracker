@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useId } from "react";
-import { loadData, saveData, syncWhenOnline } from "../db";
+import { loadData, saveData, saveLocalNow, refreshFromRemote, syncWhenOnline } from "../db";
+import { merge3 } from "../merge";
 import { isLockEnabled, isWebAuthnSupported, hasWebAuthnCredential, hasPin, enrollWebAuthn, setPin as setLockPin, disableLock } from "../lock";
 
 const TABS = ["Dashboard", "Banks", "Investments", "Analytics", "Notes", "Settings"];
@@ -13,7 +14,7 @@ const CURRENCY_LIST = Object.keys(CURRENCY_SYMBOLS);
 const INVESTMENT_BUCKETS = ["Stocks","ETF","Crypto","Artwork","Watches","Real Estate","Companies","Bonds","Other"];
 const BUCKET_ICONS = { Stocks:"📈", ETF:"📊", Crypto:"🪙", Artwork:"🖼️", Watches:"⌚", "Real Estate":"🏠", Companies:"🏢", Bonds:"📜", Other:"📦" };
 function bucketColor(bucket){ const idx=INVESTMENT_BUCKETS.indexOf(bucket); return COLORS_LIST[Math.max(0,idx)%COLORS_LIST.length]; }
-const VERSION = "v5.19.0";
+const VERSION = "v5.20.0";
 
 function sym(c){ return CURRENCY_SYMBOLS[c]||(c?c+" ":""); }
 const fmtNum = n => Number(n||0).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -2163,29 +2164,46 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
   const initialLoadDone=useRef(false);
   const getCurrentPayload=useRef(null);
 
+  // Restore every synced field from a payload. Used for the first load and
+  // whenever another device's changes are folded in.
+  const applyPayload=data=>{
+    if(!data)return;
+      if(data.banks)setBanks(normalizeBanks(data.banks));
+      else if(data.phpBanks||data.sgdBanks)setBanks(normalizeBanks([...(data.phpBanks||[]).map(b=>({...b,currency:"PHP"})),...(data.sgdBanks||[]).map(b=>({...b,currency:"SGD"}))]));
+      let inv=[];
+      if(data.investments){inv=data.investments.map(i=>{if(i.items)return i;const v=parseFloat(i.value)||0;return{id:i.id||Date.now()+Math.random(),name:i.name,bucket:i.bucket||"Stocks",items:[{id:Date.now()+Math.random(),name:i.name,currency:i.currency||"USD",cost:i.cost||0,value:v,notes:i.notes||"",history:i.history||[{value:v,date:new Date().toISOString()}]}]};});}
+      if(data.crypto){const cryptoItems=data.crypto.map(c=>({id:(c.id||Date.now())+Math.random(),name:c.coin,currency:c.currency||"USD",cost:0,value:parseFloat(c.value)||0,notes:c.notes||`${c.amount} tokens`,history:[{value:parseFloat(c.value)||0,date:new Date().toISOString()}]}));if(cryptoItems.length)inv.push({id:Date.now()+Math.random(),name:"Crypto Portfolio",bucket:"Crypto",items:cryptoItems});}
+      setInvestments(inv);
+      if(data.tags)setTags(data.tags);
+      if(Array.isArray(data.notes))setNotes(data.notes);
+      else if(typeof data.notes==="string"&&data.notes.trim())setNotes([{id:Date.now(),text:data.notes}]);
+      if(data.theme)setTheme(data.theme);
+      if(data.appName)setAppName(data.appName);
+      if(data.profile)setProfile(data.profile);
+      if(data.overviewCur)setOverviewCur(data.overviewCur);
+      if(data.hideTotals!==undefined)setHideTotals(data.hideTotals);
+      if(data.analyticsPrefs)setAnalyticsPrefs(data.analyticsPrefs);
+      if(Array.isArray(data.pinnedBudgets))setPinnedBudgets(data.pinnedBudgets);
+      if(Array.isArray(data.dashboardOrder))setDashboardOrder(data.dashboardOrder);
+  };
+
+  // Adopt a state that came back from the cloud. If the user kept editing
+  // while the request was in flight, merge those edits on top instead of
+  // replacing them.
+  const applyRemote=(basePayload,serverPayload)=>{
+    const current=getCurrentPayload.current?.()||basePayload;
+    const same=JSON.stringify(current)===JSON.stringify(basePayload);
+    const next=same?serverPayload:merge3(basePayload,current,serverPayload);
+    if(JSON.stringify(next)===JSON.stringify(current))return;
+    applyPayload(next);
+    toast("success","Updated with changes from your other device.");
+  };
+
   useEffect(()=>{
     (async()=>{
       setSyncStatus("loading");
       const data=await loadData(userId);
-      if(data){
-        if(data.banks)setBanks(normalizeBanks(data.banks));
-        else if(data.phpBanks||data.sgdBanks)setBanks(normalizeBanks([...(data.phpBanks||[]).map(b=>({...b,currency:"PHP"})),...(data.sgdBanks||[]).map(b=>({...b,currency:"SGD"}))]));
-        let inv=[];
-        if(data.investments){inv=data.investments.map(i=>{if(i.items)return i;const v=parseFloat(i.value)||0;return{id:i.id||Date.now()+Math.random(),name:i.name,bucket:i.bucket||"Stocks",items:[{id:Date.now()+Math.random(),name:i.name,currency:i.currency||"USD",cost:i.cost||0,value:v,notes:i.notes||"",history:i.history||[{value:v,date:new Date().toISOString()}]}]};});}
-        if(data.crypto){const cryptoItems=data.crypto.map(c=>({id:(c.id||Date.now())+Math.random(),name:c.coin,currency:c.currency||"USD",cost:0,value:parseFloat(c.value)||0,notes:c.notes||`${c.amount} tokens`,history:[{value:parseFloat(c.value)||0,date:new Date().toISOString()}]}));if(cryptoItems.length)inv.push({id:Date.now()+Math.random(),name:"Crypto Portfolio",bucket:"Crypto",items:cryptoItems});}
-        setInvestments(inv);
-        if(data.tags)setTags(data.tags);
-        if(Array.isArray(data.notes))setNotes(data.notes);
-        else if(typeof data.notes==="string"&&data.notes.trim())setNotes([{id:Date.now(),text:data.notes}]);
-        if(data.theme)setTheme(data.theme);
-        if(data.appName)setAppName(data.appName);
-        if(data.profile)setProfile(data.profile);
-        if(data.overviewCur)setOverviewCur(data.overviewCur);
-        if(data.hideTotals!==undefined)setHideTotals(data.hideTotals);
-        if(data.analyticsPrefs)setAnalyticsPrefs(data.analyticsPrefs);
-        if(Array.isArray(data.pinnedBudgets))setPinnedBudgets(data.pinnedBudgets);
-        if(Array.isArray(data.dashboardOrder))setDashboardOrder(data.dashboardOrder);
-      }
+      applyPayload(data);
       setSyncStatus("saved");
       initialLoadDone.current=true;
     })();
@@ -2194,13 +2212,18 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
 
   useEffect(()=>{
     if(!initialLoadDone.current)return;
-    getCurrentPayload.current=()=>({banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets,dashboardOrder});
+    const payload={banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets,dashboardOrder};
+    getCurrentPayload.current=()=>payload;
+    saveLocalNow(userId,payload); // never wait on the network (or the debounce) to keep a copy on this device
     setSyncStatus("saving");
     if(saveTimerRef.current)clearTimeout(saveTimerRef.current);
     saveTimerRef.current=setTimeout(async()=>{
-      const result=await saveData(userId,{banks,investments,tags,notes,theme,appName,profile,overviewCur,hideTotals,analyticsPrefs,pinnedBudgets,dashboardOrder});
-      if(result==="synced")setSyncStatus("saved");
-      else if(result==="queued-offline")setSyncStatus("offline");
+      const result=await saveData(userId,payload);
+      if(result.status==="synced"){
+        setSyncStatus("saved");
+        if(result.merged)applyRemote(payload,result.merged);
+      }
+      else if(result.status==="queued-offline")setSyncStatus("offline");
       else{setSyncStatus("error");toast("error","Couldn't reach the server — saved on this device and will sync once it's back.");}
     },2000);
     return()=>clearTimeout(saveTimerRef.current);
@@ -2227,13 +2250,48 @@ export default function FinanceTracker({userId,userEmail,userName,userPhoto,isOf
     };
   },[userId]);
 
+  // Coming back online: upload anything waiting, merging with what other
+  // devices saved. (This used to bail out on first render and never
+  // register, so reconnecting did nothing until the next edit.)
   useEffect(()=>{
-    if(!initialLoadDone.current)return;
-    const unsub=syncWhenOnline(userId,()=>getCurrentPayload.current?.()??{},result=>{
-      if(result==="synced"){setSyncStatus("saved");toast("success","Back online — synced.");}
+    const unsub=syncWhenOnline(userId,()=>initialLoadDone.current?getCurrentPayload.current?.():null,(result,detail)=>{
+      if(result==="synced"){
+        setSyncStatus("saved");
+        const sent=getCurrentPayload.current?.();
+        if(detail?.merged&&sent)applyRemote(sent,detail.merged);
+        else toast("success","Back online — synced.");
+      }
       else{setSyncStatus("error");toast("error","Still couldn't sync — will keep retrying.");}
     });
     return()=>{unsub.then(fn=>fn?.());};
+  // eslint-disable-next-line
+  },[userId]);
+
+  // Pull other devices' changes in whenever this one wakes up, regains
+  // focus, or (while open) every minute — so you start from current data
+  // instead of editing a stale copy and overwriting someone else's work.
+  useEffect(()=>{
+    const refresh=async()=>{
+      if(!initialLoadDone.current||document.hidden||!navigator.onLine)return;
+      const local=getCurrentPayload.current?.();
+      if(!local)return;
+      try{
+        const r=await refreshFromRemote(userId,local);
+        if(r)applyRemote(r.basePayload,r.payload);
+      }catch{}
+    };
+    const onVis=()=>{if(!document.hidden)refresh();};
+    document.addEventListener("visibilitychange",onVis);
+    window.addEventListener("focus",refresh);
+    window.addEventListener("online",refresh);
+    const timer=setInterval(refresh,60000);
+    return()=>{
+      document.removeEventListener("visibilitychange",onVis);
+      window.removeEventListener("focus",refresh);
+      window.removeEventListener("online",refresh);
+      clearInterval(timer);
+    };
+  // eslint-disable-next-line
   },[userId]);
 
   const importBackup=p=>{
